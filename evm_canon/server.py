@@ -7,9 +7,14 @@ Without EVM_CANON_PAY_TO the endpoint is free (dev / self-hosted mode).
 
 Env:
   EVM_CANON_PAY_TO        receiving EVM address (enables payment gating)
-  EVM_CANON_PRICE         price per call, e.g. "$0.0005" (default)
-  EVM_CANON_NETWORK       x402 network id (default "base")
-  EVM_CANON_FACILITATOR   facilitator URL (default: x402 SDK default)
+  EVM_CANON_PRICE         price per call, e.g. "$0.002" (default)
+  EVM_CANON_NETWORK       x402 network id (default "eip155:196" = X Layer)
+  OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE
+                          OKX dev-portal credentials; when set, verification
+                          and settlement go through the OKX facilitator
+                          (web3.okx.com /api/v6/pay/x402/*)
+  EVM_CANON_FACILITATOR   fallback facilitator URL when OKX creds absent
+                          (default: x402.org — testnets only)
 
 GET /healthz and GET /schema are always free.
 """
@@ -22,7 +27,7 @@ from fastapi.responses import JSONResponse
 
 from evm_canon import canonicalize, default_registry, default_schema
 
-PRICE_DEFAULT = "$0.0005"
+PRICE_DEFAULT = "$0.002"
 
 
 def create_app() -> FastAPI:
@@ -30,25 +35,48 @@ def create_app() -> FastAPI:
 
     pay_to = os.environ.get("EVM_CANON_PAY_TO")
     if pay_to:
-        from x402 import x402ResourceServer
-        from x402.http import (FacilitatorConfig, HTTPFacilitatorClient,
-                               PaymentOption, RouteConfig)
+        from x402.http import PaymentOption
         from x402.http.middleware.fastapi import PaymentMiddlewareASGI
-        from x402.mechanisms.evm.exact.register import register_exact_evm_server
+        from x402.http.types import RouteConfig
+        from x402.mechanisms.evm.exact.server import ExactEvmScheme
+        from x402.server import x402ResourceServer
 
-        facilitator_url = os.environ.get("EVM_CANON_FACILITATOR")
-        config = (FacilitatorConfig(url=facilitator_url)
-                  if facilitator_url else FacilitatorConfig())
-        server = x402ResourceServer(HTTPFacilitatorClient(config))
-        register_exact_evm_server(server)
+        okx_key = os.environ.get("OKX_API_KEY")
+        if okx_key:
+            from x402.http import (OKXAuthConfig, OKXFacilitatorClient,
+                                   OKXFacilitatorConfig)
+            from x402.mechanisms.evm.deferred.server import AggrDeferredEvmScheme
+            facilitator = OKXFacilitatorClient(OKXFacilitatorConfig(
+                auth=OKXAuthConfig(
+                    api_key=okx_key,
+                    secret_key=os.environ["OKX_SECRET_KEY"],
+                    passphrase=os.environ["OKX_PASSPHRASE"]),
+                sync_settle=True))
+            network = os.environ.get("EVM_CANON_NETWORK", "eip155:196")
+            schemes = [ExactEvmScheme(), AggrDeferredEvmScheme()]
+        else:
+            from x402.http import FacilitatorConfig, HTTPFacilitatorClient
+            facilitator_url = os.environ.get("EVM_CANON_FACILITATOR")
+            facilitator = HTTPFacilitatorClient(
+                FacilitatorConfig(url=facilitator_url)
+                if facilitator_url else FacilitatorConfig())
+            network = os.environ.get("EVM_CANON_NETWORK", "eip155:84532")
+            schemes = [ExactEvmScheme()]
+
+        server = x402ResourceServer(facilitator)
+        for scheme in schemes:
+            server.register(network, scheme)
+
+        price = os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT)
         routes = {
             "POST /canonicalize": RouteConfig(
-                accepts=PaymentOption(
-                    scheme="exact",
+                accepts=[PaymentOption(
+                    scheme=s.scheme,
                     pay_to=pay_to,
-                    price=os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT),
-                    network=os.environ.get("EVM_CANON_NETWORK", "base"),
-                ),
+                    price=price,
+                    network=network,
+                    max_timeout_seconds=300,
+                ) for s in schemes],
                 description="Canonicalize one EVM token/value payload into "
                             "schema-validated JSON (deterministic, honest nulls)",
                 mime_type="application/json",

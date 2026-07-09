@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx2"]
-serve = ["fastapi>=0.110", "uvicorn>=0.29", "x402[evm]>=2.14", "httpx>=0.27"]
+serve = ["fastapi>=0.110", "uvicorn>=0.29", "okxweb3-app-x402[evm]>=0.1.1", "httpx>=0.27"]
 
 [project.scripts]
 evm-canon = "evm_canon.cli:main"
