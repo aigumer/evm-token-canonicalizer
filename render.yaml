@@ -1,0 +1,18 @@
+# Render blueprint for the evm-canon A2MCP endpoint (free tier).
+# Payment gating comes from env (see evm_canon/server.py).
+services:
+  - type: web
+    name: evm-canon
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: EVM_CANON_PAY_TO
+        sync: false
+      - key: EVM_CANON_NETWORK
+        sync: false
+      - key: EVM_CANON_PRICE
+        sync: false
+      - key: EVM_CANON_FACILITATOR
+        sync: false
