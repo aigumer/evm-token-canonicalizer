@@ -3,3 +3,5 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 tests/fixtures/registry_ambiguous.json
+dist/
+build/
