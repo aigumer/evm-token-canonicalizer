@@ -14,7 +14,7 @@ def test_dry_run_charge_receipt():
     b = A2MCPBilling(asset="USDT")
     r = b.charge("agent:0xabc", records=2)
     assert r.settled is False
-    assert r.amount_micro == 1000
+    assert r.amount_micro == 2 * PRICE_PER_RECORD_MICRO
     assert r.asset == "USDT"
 
 

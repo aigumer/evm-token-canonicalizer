@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass
 
 # Tier 1 (base): validate + canonicalize one record against default/target schema.
-PRICE_PER_RECORD_MICRO = 500      # 0.000500 USDG per record
+PRICE_PER_RECORD_MICRO = 2000     # 0.002 per record (matches x402 endpoint price)
 SETTLEMENT_ASSETS = ("USDG", "USDT")
 
 

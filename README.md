@@ -132,7 +132,7 @@ publication are interactive by design (keys stay in the TEE).
 5. Integrate the **OKX Payment SDK** — required before A2MCP goes live. The
    seam is `evm_canon/payment.py` (`A2MCPBilling.charge`); the `TODO(go-live)`
    block marks exactly where live credentials + wallet attach. Pricing is
-   int micro-units of USDG/USDT (default 500 µ = 0.0005 per record).
+   int micro-units of USDG/USDT (default 2000 µ = 0.002 per record).
 6. Publish the listing with the promise: *schema-validated, deterministic
    core, honest nulls.* Fund the wallet for gas (X Layer is gas-free).
 

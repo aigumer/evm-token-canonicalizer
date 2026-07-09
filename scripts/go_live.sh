@@ -37,7 +37,7 @@ read -rp "Press enter once billing settles... "
 cat <<'EOF'
 == 6/6 Publish the listing ==
 Listing promise (verbatim): "schema-validated, deterministic core, honest nulls."
-Price: 500 micro-USDG per record (Tier 1). Fund the wallet for gas if needed
+Price: 2000 micro-units (0.002) per record (Tier 1). Fund the wallet for gas if needed
 (X Layer is gas-free).
 EOF
 echo "Done."
