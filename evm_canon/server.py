@@ -80,7 +80,6 @@ def create_app() -> FastAPI:
                 description="Canonicalize one EVM token/value payload into "
                             "schema-validated JSON (deterministic, honest nulls)",
                 mime_type="application/json",
-                service_name="evm-token-canonicalizer",
             ),
         }
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)

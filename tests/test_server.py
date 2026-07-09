@@ -40,6 +40,16 @@ def test_typed_error_is_delivered_as_200(client):
     assert r.json()["error"]["code"] == "INVALID_ADDRESS"
 
 
+def test_paid_mode_app_constructs(monkeypatch):
+    """Route/scheme wiring errors must surface at build time, not on Render."""
+    monkeypatch.setenv("EVM_CANON_PAY_TO",
+                       "0x8797b596a56f8b2d46f428fca2e6ac2a62a353ee")
+    monkeypatch.setenv("OKX_API_KEY", "test-key")
+    monkeypatch.setenv("OKX_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("OKX_PASSPHRASE", "test-pass")
+    create_app()  # must not raise; facilitator is not contacted until a request
+
+
 def test_malformed_invocation_is_400(client):
     assert client.post("/canonicalize", json={"nope": 1}).status_code == 400
     assert client.post("/canonicalize",
