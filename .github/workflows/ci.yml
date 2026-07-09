@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,serve]"
       # Acceptance criteria: idempotency + precision (incl. no-float grep) in CI
       - run: pytest -q
       - run: pytest -q tests/test_idempotency.py tests/test_precision.py

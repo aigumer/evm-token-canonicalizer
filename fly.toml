@@ -1,0 +1,19 @@
+# fly.io deployment for the evm-canon A2MCP endpoint.
+# Payment gating comes from env (see evm_canon/server.py):
+#   fly secrets set EVM_CANON_PAY_TO=0x... EVM_CANON_NETWORK=eip155:8453 \
+#                   EVM_CANON_FACILITATOR=https://...
+app = "evm-canon"
+primary_region = "ams"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

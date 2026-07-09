@@ -16,10 +16,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "httpx2"]
+serve = ["fastapi>=0.110", "uvicorn>=0.29", "x402[evm]>=2.14", "httpx>=0.27"]
 
 [project.scripts]
 evm-canon = "evm_canon.cli:main"
+evm-canon-serve = "evm_canon.server:main"
 
 [tool.setuptools.packages.find]
 include = ["evm_canon*"]
