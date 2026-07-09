@@ -1,0 +1,97 @@
+{
+  "registry_version": "tokenlists@2026-07-01",
+  "sources": [
+    "https://tokens.uniswap.org (Uniswap Labs default list)",
+    "https://chainid.network/chains.json (ethereum-lists/chains)"
+  ],
+  "chains": [
+    {
+      "chainId": 1,
+      "name": "ethereum",
+      "aliases": ["eth", "mainnet", "ethereum", "ether", "erc20"],
+      "native": {"symbol": "ETH", "name": "Ether", "decimals": 18, "aliases": ["ETH"]},
+      "wrapped_native": {"symbol": "WETH", "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"}
+    },
+    {
+      "chainId": 10,
+      "name": "optimism",
+      "aliases": ["op", "optimism", "op mainnet", "optimistic ethereum"],
+      "native": {"symbol": "ETH", "name": "Ether", "decimals": 18, "aliases": ["ETH"]},
+      "wrapped_native": {"symbol": "WETH", "address": "0x4200000000000000000000000000000000000006"}
+    },
+    {
+      "chainId": 56,
+      "name": "bnb-smart-chain",
+      "aliases": ["bsc", "bnb", "binance", "binance smart chain", "bnb chain", "bnb-smart-chain"],
+      "native": {"symbol": "BNB", "name": "BNB", "decimals": 18, "aliases": ["BNB"]},
+      "wrapped_native": {"symbol": "WBNB", "address": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"}
+    },
+    {
+      "chainId": 137,
+      "name": "polygon",
+      "aliases": ["matic", "polygon", "polygon pos", "pol", "polygon-pos"],
+      "native": {"symbol": "POL", "name": "Polygon Ecosystem Token", "decimals": 18, "aliases": ["POL", "MATIC"]},
+      "wrapped_native": {"symbol": "WPOL", "address": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"}
+    },
+    {
+      "chainId": 196,
+      "name": "xlayer",
+      "aliases": ["xlayer", "x layer", "x-layer", "okx x layer"],
+      "native": {"symbol": "OKB", "name": "OKB", "decimals": 18, "aliases": ["OKB"]},
+      "wrapped_native": {"symbol": "WOKB", "address": "0xe538905cf8410324e03A5A23C1c177a474D59b2b"}
+    },
+    {
+      "chainId": 8453,
+      "name": "base",
+      "aliases": ["base", "base mainnet", "coinbase base"],
+      "native": {"symbol": "ETH", "name": "Ether", "decimals": 18, "aliases": ["ETH"]},
+      "wrapped_native": {"symbol": "WETH", "address": "0x4200000000000000000000000000000000000006"}
+    },
+    {
+      "chainId": 42161,
+      "name": "arbitrum",
+      "aliases": ["arb", "arbitrum", "arbitrum one", "arbitrum-one"],
+      "native": {"symbol": "ETH", "name": "Ether", "decimals": 18, "aliases": ["ETH"]},
+      "wrapped_native": {"symbol": "WETH", "address": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"}
+    },
+    {
+      "chainId": 43114,
+      "name": "avalanche",
+      "aliases": ["avax", "avalanche", "avalanche c-chain", "avalanche-c"],
+      "native": {"symbol": "AVAX", "name": "Avalanche", "decimals": 18, "aliases": ["AVAX"]},
+      "wrapped_native": {"symbol": "WAVAX", "address": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"}
+    }
+  ],
+  "tokens": [
+    {"chainId": 1, "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "symbol": "USDC", "name": "USD Coin", "decimals": 6},
+    {"chainId": 1, "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "symbol": "USDT", "name": "Tether USD", "decimals": 6},
+    {"chainId": 1, "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F", "symbol": "DAI", "name": "Dai Stablecoin", "decimals": 18},
+    {"chainId": 1, "address": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", "symbol": "WBTC", "name": "Wrapped BTC", "decimals": 8},
+    {"chainId": 1, "address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", "symbol": "WETH", "name": "Wrapped Ether", "decimals": 18},
+
+    {"chainId": 10, "address": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", "symbol": "USDC", "name": "USD Coin", "decimals": 6},
+    {"chainId": 10, "address": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", "symbol": "USDT", "name": "Tether USD", "decimals": 6},
+    {"chainId": 10, "address": "0x4200000000000000000000000000000000000006", "symbol": "WETH", "name": "Wrapped Ether", "decimals": 18},
+
+    {"chainId": 56, "address": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", "symbol": "USDC", "name": "USD Coin", "decimals": 18},
+    {"chainId": 56, "address": "0x55d398326f99059fF775485246999027B3197955", "symbol": "USDT", "name": "Tether USD", "decimals": 18},
+    {"chainId": 56, "address": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", "symbol": "WBNB", "name": "Wrapped BNB", "decimals": 18},
+
+    {"chainId": 137, "address": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", "symbol": "USDC", "name": "USD Coin", "decimals": 6},
+    {"chainId": 137, "address": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "symbol": "USDC.e", "name": "Bridged USDC", "decimals": 6},
+    {"chainId": 137, "address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", "symbol": "USDT", "name": "Tether USD", "decimals": 6},
+    {"chainId": 137, "address": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", "symbol": "WPOL", "name": "Wrapped POL", "decimals": 18},
+
+    {"chainId": 8453, "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "symbol": "USDC", "name": "USD Coin", "decimals": 6},
+    {"chainId": 8453, "address": "0x4200000000000000000000000000000000000006", "symbol": "WETH", "name": "Wrapped Ether", "decimals": 18},
+
+    {"chainId": 42161, "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "symbol": "USDC", "name": "USD Coin", "decimals": 6},
+    {"chainId": 42161, "address": "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8", "symbol": "USDC.e", "name": "Bridged USDC", "decimals": 6},
+    {"chainId": 42161, "address": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", "symbol": "USDT", "name": "Tether USD", "decimals": 6},
+    {"chainId": 42161, "address": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", "symbol": "WETH", "name": "Wrapped Ether", "decimals": 18},
+
+    {"chainId": 43114, "address": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", "symbol": "USDC", "name": "USD Coin", "decimals": 6},
+    {"chainId": 43114, "address": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", "symbol": "USDT", "name": "Tether USD", "decimals": 6},
+    {"chainId": 43114, "address": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", "symbol": "WAVAX", "name": "Wrapped AVAX", "decimals": 18}
+  ]
+}
