@@ -68,20 +68,21 @@ def create_app() -> FastAPI:
             server.register(network, scheme)
 
         price = os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT)
-        routes = {
-            "POST /canonicalize": RouteConfig(
-                accepts=[PaymentOption(
-                    scheme=s.scheme,
-                    pay_to=pay_to,
-                    price=price,
-                    network=network,
-                    max_timeout_seconds=300,
-                ) for s in schemes],
-                description="Canonicalize one EVM token/value payload into "
-                            "schema-validated JSON (deterministic, honest nulls)",
-                mime_type="application/json",
-            ),
-        }
+        # OKX x402 validation probes the endpoint with plain GETs too, so the
+        # challenge must gate every method the URL serves, not just POST.
+        route = RouteConfig(
+            accepts=[PaymentOption(
+                scheme=s.scheme,
+                pay_to=pay_to,
+                price=price,
+                network=network,
+                max_timeout_seconds=300,
+            ) for s in schemes],
+            description="Canonicalize one EVM token/value payload into "
+                        "schema-validated JSON (deterministic, honest nulls)",
+            mime_type="application/json",
+        )
+        routes = {"POST /canonicalize": route, "GET /canonicalize": route}
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
     @app.get("/healthz")
@@ -93,6 +94,14 @@ def create_app() -> FastAPI:
     @app.get("/schema")
     def schema():
         return default_schema()
+
+    @app.get("/canonicalize")
+    def canonicalize_usage():
+        # Reached only after payment (or in free mode): describe the contract.
+        return {"usage": {"method": "POST",
+                          "body": {"raw": "required", "target_schema": "optional",
+                                   "hints": "optional"},
+                          "schema": "/schema"}}
 
     @app.post("/canonicalize")
     async def canonicalize_route(request: Request):

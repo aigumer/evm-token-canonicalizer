@@ -1,0 +1,15 @@
+# Render free tier sleeps after 15 min idle (~30-60s cold start), which can
+# time out OKX's x402 validator and buyer agents. Ping the free health route
+# to keep the instance warm.
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -sf --max-time 60 https://evm-canon.onrender.com/healthz
