@@ -40,6 +40,15 @@ def test_typed_error_is_delivered_as_200(client):
     assert r.json()["error"]["code"] == "INVALID_ADDRESS"
 
 
+def test_decode_roundtrip(client):
+    r = client.post("/decode", json={"raw": {
+        "data": "0xa9059cbb"
+                "000000000000000000000000af88d065e77c8cc2239327c5edb3a432268e5831"
+                "000000000000000000000000000000000000000000000000000000000016e360"}})
+    assert r.status_code == 200
+    assert r.json()["result"]["function"]["name"] == "transfer"
+
+
 def test_paid_mode_app_constructs(monkeypatch):
     """Route/scheme wiring errors must surface at build time, not on Render."""
     monkeypatch.setenv("EVM_CANON_PAY_TO",

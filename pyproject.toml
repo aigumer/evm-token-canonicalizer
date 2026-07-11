@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evm-canon"
-version = "0.1.0"
+version = "0.2.0"
 description = "EVM Token Canonicalizer - deterministic, schema-validated normalization of messy EVM token data (OKX.AI A2MCP service)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,6 +12,7 @@ requires-python = ">=3.11"
 dependencies = [
     "eth-utils>=4.0",
     "eth-hash[pycryptodome]>=0.7",
+    "eth-abi>=5.0",
     "jsonschema>=4.20",
 ]
 

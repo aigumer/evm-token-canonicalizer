@@ -1,7 +1,15 @@
-# evm-canon — EVM Token Canonicalizer (OKX.AI A2MCP service)
+# evm-canon — deterministic EVM data utilities (OKX.AI A2MCP service)
 
 Turns messy EVM token / on-chain value data into strict, schema-validated JSON.
 Sold to **other agents** as a pay-per-call A2MCP service on OKX.AI.
+
+Three services behind one x402-gated endpoint (`evm_canon/server.py`):
+
+| Route | What | Price |
+|---|---|---|
+| `POST /canonicalize` | token/value canonicalization (below) | 0.002 |
+| `POST /decode` | calldata → typed function args + deterministic risk flags (`evm_canon/decoder.py`, pinned `sigdb@2026-07-10`) | 0.003 |
+| `POST /resolve` | ENS forward/reverse with forward-verification (`evm_canon/ens.py`, RPC failover) | 0.001 |
 
 The promise (this is the marketplace listing, verbatim):
 **schema-validated, deterministic core, honest nulls.**

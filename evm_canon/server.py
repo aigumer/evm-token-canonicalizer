@@ -28,6 +28,8 @@ from fastapi.responses import JSONResponse
 from evm_canon import canonicalize, default_registry, default_schema
 
 PRICE_DEFAULT = "$0.002"
+PRICE_DECODE_DEFAULT = "$0.003"
+PRICE_RESOLVE_DEFAULT = "$0.001"
 
 
 def create_app() -> FastAPI:
@@ -67,22 +69,36 @@ def create_app() -> FastAPI:
         for scheme in schemes:
             server.register(network, scheme)
 
-        price = os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT)
         # OKX x402 validation probes the endpoint with plain GETs too, so the
         # challenge must gate every method the URL serves, not just POST.
-        route = RouteConfig(
-            accepts=[PaymentOption(
-                scheme=s.scheme,
-                pay_to=pay_to,
-                price=price,
-                network=network,
-                max_timeout_seconds=300,
-            ) for s in schemes],
-            description="Canonicalize one EVM token/value payload into "
-                        "schema-validated JSON (deterministic, honest nulls)",
-            mime_type="application/json",
-        )
-        routes = {"POST /canonicalize": route, "GET /canonicalize": route}
+        def paid_route(price: str, description: str) -> RouteConfig:
+            return RouteConfig(
+                accepts=[PaymentOption(
+                    scheme=s.scheme,
+                    pay_to=pay_to,
+                    price=price,
+                    network=network,
+                    max_timeout_seconds=300,
+                ) for s in schemes],
+                description=description,
+                mime_type="application/json",
+            )
+
+        canon = paid_route(
+            os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT),
+            "Canonicalize one EVM token/value payload into "
+            "schema-validated JSON (deterministic, honest nulls)")
+        decode = paid_route(
+            os.environ.get("EVM_CANON_PRICE_DECODE", PRICE_DECODE_DEFAULT),
+            "Decode EVM calldata into typed function args with "
+            "deterministic risk flags (unlimited approvals, admin actions)")
+        resolve = paid_route(
+            os.environ.get("EVM_CANON_PRICE_RESOLVE", PRICE_RESOLVE_DEFAULT),
+            "Resolve ENS names to addresses and reverse, "
+            "with forward-verification of reverse records")
+        routes = {"POST /canonicalize": canon, "GET /canonicalize": canon,
+                  "POST /decode": decode, "GET /decode": decode,
+                  "POST /resolve": resolve, "GET /resolve": resolve}
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
     @app.get("/healthz")
@@ -95,6 +111,44 @@ def create_app() -> FastAPI:
     def schema():
         return default_schema()
 
+    async def _json_body(request: Request):
+        try:
+            payload = await request.json()
+        except Exception:
+            return None, JSONResponse(status_code=400, content={
+                "error": {"code": "MALFORMED_INVOCATION", "field": None,
+                          "detail": "body is not valid JSON"}})
+        if not isinstance(payload, dict) or "raw" not in payload:
+            return None, JSONResponse(status_code=400, content={
+                "error": {"code": "MALFORMED_INVOCATION", "field": "raw",
+                          "detail": "body must be an object with a 'raw' key"}})
+        return payload, None
+
+    @app.get("/decode")
+    def decode_usage():
+        return {"usage": {"method": "POST",
+                          "body": {"raw": {"data": "0x... calldata (required)",
+                                           "to": "optional address",
+                                           "value": "optional wei"}}}}
+
+    @app.post("/decode")
+    async def decode_route(request: Request):
+        from evm_canon.decoder import decode_calldata
+        payload, err = await _json_body(request)
+        return err if err else decode_calldata(payload)
+
+    @app.get("/resolve")
+    def resolve_usage():
+        return {"usage": {"method": "POST",
+                          "body": {"raw": {"name": "alice.eth (or)",
+                                           "address": "0x... for reverse"}}}}
+
+    @app.post("/resolve")
+    async def resolve_route(request: Request):
+        from evm_canon.ens import resolve
+        payload, err = await _json_body(request)
+        return err if err else resolve(payload)
+
     @app.get("/canonicalize")
     def canonicalize_usage():
         # Reached only after payment (or in free mode): describe the contract.
@@ -105,19 +159,10 @@ def create_app() -> FastAPI:
 
     @app.post("/canonicalize")
     async def canonicalize_route(request: Request):
-        try:
-            payload = await request.json()
-        except Exception:
-            return JSONResponse(status_code=400, content={
-                "error": {"code": "MALFORMED_INVOCATION", "field": None,
-                          "detail": "body is not valid JSON"}})
-        if not isinstance(payload, dict) or "raw" not in payload:
-            return JSONResponse(status_code=400, content={
-                "error": {"code": "MALFORMED_INVOCATION", "field": "raw",
-                          "detail": "body must be an object with a 'raw' key"}})
+        payload, err = await _json_body(request)
         # canonicalize() returns {result, report} or {"error": {...}} —
         # a typed error is a delivered product, so both are HTTP 200.
-        return canonicalize(payload)
+        return err if err else canonicalize(payload)
 
     return app
 
