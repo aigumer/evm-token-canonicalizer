@@ -30,6 +30,7 @@ from evm_canon import canonicalize, default_registry, default_schema
 PRICE_DEFAULT = "$0.002"
 PRICE_DECODE_DEFAULT = "$0.003"
 PRICE_RESOLVE_DEFAULT = "$0.001"
+PRICE_LOTS_DEFAULT = "$0.005"
 
 
 def create_app() -> FastAPI:
@@ -96,9 +97,14 @@ def create_app() -> FastAPI:
             os.environ.get("EVM_CANON_PRICE_RESOLVE", PRICE_RESOLVE_DEFAULT),
             "Resolve ENS names to addresses and reverse, "
             "with forward-verification of reverse records")
+        lots = paid_route(
+            os.environ.get("EVM_CANON_PRICE_LOTS", PRICE_LOTS_DEFAULT),
+            "Crypto tax-lot engine: FIFO/LIFO/HIFO cost-basis matching, "
+            "realized gains and remaining inventory in exact decimal math")
         routes = {"POST /canonicalize": canon, "GET /canonicalize": canon,
                   "POST /decode": decode, "GET /decode": decode,
-                  "POST /resolve": resolve, "GET /resolve": resolve}
+                  "POST /resolve": resolve, "GET /resolve": resolve,
+                  "POST /lots": lots, "GET /lots": lots}
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
     @app.get("/healthz")
@@ -148,6 +154,22 @@ def create_app() -> FastAPI:
         from evm_canon.ens import resolve
         payload, err = await _json_body(request)
         return err if err else resolve(payload)
+
+    @app.get("/lots")
+    def lots_usage():
+        return {"usage": {"method": "POST",
+                          "body": {"raw": {
+                              "method": "FIFO | LIFO | HIFO",
+                              "trades": [{"side": "buy|sell", "asset": "BTC",
+                                          "amount": "1.5", "price": "60000",
+                                          "fee": "10 (optional)",
+                                          "time": "unix or ISO (sortable)"}]}}}}
+
+    @app.post("/lots")
+    async def lots_route(request: Request):
+        from evm_canon.lots import calculate_lots
+        payload, err = await _json_body(request)
+        return err if err else calculate_lots(payload)
 
     @app.get("/canonicalize")
     def canonicalize_usage():
