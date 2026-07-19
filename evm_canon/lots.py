@@ -56,7 +56,7 @@ def _calculate(payload: dict) -> dict:
     if not isinstance(raw, dict):
         raise _Typed("MALFORMED_INVOCATION", "raw", "missing 'raw' object")
 
-    method = str(raw.get("method", "FIFO")).upper()
+    method = str(raw.get("method") or payload.get("method") or "FIFO").upper()
     if method not in METHODS:
         raise _Typed("UNKNOWN_METHOD", "raw.method",
                      f"method must be one of {'/'.join(METHODS)}")

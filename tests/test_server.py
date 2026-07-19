@@ -49,6 +49,25 @@ def test_decode_roundtrip(client):
     assert r.json()["result"]["function"]["name"] == "transfer"
 
 
+def test_bare_payload_accepted(client):
+    """The platform probe sends fields without the {"raw": ...} wrapper."""
+    r = client.post("/canonicalize", json={"symbol": "USDC",
+                                           "chain": "arbitrum",
+                                           "amount": "1500000"})
+    assert r.status_code == 200
+    assert r.json()["result"]["amount_human"] == "1.5"
+    r = client.post("/decode", json={
+        "data": "0xa9059cbb"
+                "000000000000000000000000af88d065e77c8cc2239327c5edb3a432268e5831"
+                "000000000000000000000000000000000000000000000000000000000016e360"})
+    assert r.json()["result"]["function"]["name"] == "transfer"
+    r = client.post("/lots", json={"method": "LIFO", "trades": [
+        {"side": "buy", "asset": "BTC", "amount": "1", "price": "10", "time": 1},
+        {"side": "sell", "asset": "BTC", "amount": "1", "price": "15", "time": 2}]})
+    assert r.json()["result"]["method"] == "LIFO"
+    assert r.json()["result"]["totals"]["gain"] == "5"
+
+
 def test_paid_mode_app_constructs(monkeypatch):
     """Route/scheme wiring errors must surface at build time, not on Render."""
     monkeypatch.setenv("EVM_CANON_PAY_TO",

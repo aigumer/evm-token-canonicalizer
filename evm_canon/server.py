@@ -107,6 +107,26 @@ def create_app() -> FastAPI:
                   "POST /lots": lots, "GET /lots": lots}
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
+    # Render's free tier stops the instance after 15 min without inbound
+    # traffic, and external cron pingers (GitHub Actions) fire far less often
+    # than scheduled under load. A request to our own public URL counts as
+    # inbound traffic, so a self-ping loop keeps the instance awake as long
+    # as it's running; the external pinger remains as the wake-up fallback.
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if external_url:
+        import threading
+        import urllib.request
+
+        def _self_ping():
+            while True:
+                try:
+                    urllib.request.urlopen(external_url + "/healthz", timeout=30)
+                except Exception:
+                    pass
+                threading.Event().wait(600)
+
+        threading.Thread(target=_self_ping, daemon=True).start()
+
     @app.get("/healthz")
     def healthz():
         return {"ok": True,
@@ -117,17 +137,31 @@ def create_app() -> FastAPI:
     def schema():
         return default_schema()
 
+    # Meta keys that live NEXT TO "raw" in the wrapped form, per route.
+    META_KEYS = {"target_schema", "hints", "method"}
+
     async def _json_body(request: Request):
+        """Accept both {"raw": {...}, meta...} and a bare fields object.
+
+        The marketplace listing tells callers to "provide a JSON payload with
+        the raw fields" — a reasonable client (and the platform's own
+        validation probe) sends those fields at the top level, so treat a
+        body without "raw" as the raw object itself instead of rejecting it.
+        """
         try:
             payload = await request.json()
         except Exception:
             return None, JSONResponse(status_code=400, content={
                 "error": {"code": "MALFORMED_INVOCATION", "field": None,
                           "detail": "body is not valid JSON"}})
-        if not isinstance(payload, dict) or "raw" not in payload:
+        if not isinstance(payload, dict) or not payload:
             return None, JSONResponse(status_code=400, content={
-                "error": {"code": "MALFORMED_INVOCATION", "field": "raw",
-                          "detail": "body must be an object with a 'raw' key"}})
+                "error": {"code": "MALFORMED_INVOCATION", "field": None,
+                          "detail": "body must be a non-empty JSON object"}})
+        if "raw" not in payload:
+            meta = {k: v for k, v in payload.items() if k in META_KEYS}
+            raw = {k: v for k, v in payload.items() if k not in META_KEYS}
+            payload = {"raw": raw, **meta}
         return payload, None
 
     @app.get("/decode")
