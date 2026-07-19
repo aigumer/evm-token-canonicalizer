@@ -79,8 +79,13 @@ def test_paid_mode_app_constructs(monkeypatch):
 
 
 def test_malformed_invocation_is_400(client):
-    assert client.post("/canonicalize", json={"nope": 1}).status_code == 400
+    # bare objects are wrapped into raw now → honest-nulls result, 200
+    r = client.post("/canonicalize", json={"nope": 1})
+    assert r.status_code == 200
+    body = r.json()
+    assert "error" in body or body["result"]["symbol"] is None
     assert client.post("/canonicalize",
                        content=b"not json",
                        headers={"content-type": "application/json"}
                        ).status_code == 400
+    assert client.post("/canonicalize", json={}).status_code == 400
