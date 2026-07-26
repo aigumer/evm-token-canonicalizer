@@ -116,3 +116,22 @@ def test_lots_view_typed_errors(client):
     r = client.post("/lots/fifo", json={"trades": [
         {"side": "sell", "asset": "BTC", "amount": "1", "price": "1", "time": 1}]})
     assert r.json()["error"]["code"] == "INSUFFICIENT_INVENTORY"
+
+
+def test_new_lots_routes(client):
+    trades = [
+        {"side": "buy", "asset": "BTC", "amount": "1", "price": "10000", "time": 0},
+        {"side": "buy", "asset": "BTC", "amount": "1", "price": "30000",
+         "time": 400 * 86400},
+        {"side": "sell", "asset": "BTC", "amount": "2", "price": "50000",
+         "time": 500 * 86400}]
+    acb = client.post("/lots/acb", json={"trades": trades}).json()["result"]
+    assert acb["method"] == "ACB"
+    assert acb["disposals"][0]["cost_basis"] == "40000"
+    hp = client.post("/lots/holding-period", json={"trades": trades}).json()["result"]
+    assert hp["disposals"][0]["long_term"]["cost_basis"] == "10000"
+    assert hp["disposals"][0]["short_term"]["cost_basis"] == "30000"
+    v = client.post("/lots/validate", json={"trades": trades}).json()["result"]
+    assert v["ok"] is True and v["summary"]["sells"] == 1
+    for path in ("acb", "holding-period", "validate"):
+        assert "usage" in client.get(f"/lots/{path}").json()

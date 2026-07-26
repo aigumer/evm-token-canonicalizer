@@ -34,7 +34,8 @@ PRICE_LOTS_DEFAULT = "$0.005"
 # Narrow tax-lot views: the three matching methods cost the same as the
 # generic route; the two projection views return less and cost less.
 LOTS_VIEWS = {"fifo": "$0.005", "lifo": "$0.005", "hifo": "$0.005",
-              "gains": "$0.003", "inventory": "$0.003"}
+              "acb": "$0.005", "holding-period": "$0.004",
+              "gains": "$0.003", "inventory": "$0.003", "validate": "$0.002"}
 LOTS_VIEW_DESCRIPTIONS = {
     "fifo": "FIFO cost-basis matching: oldest lots consumed first, with "
             "realized gain per disposal in exact decimal math",
@@ -42,13 +43,21 @@ LOTS_VIEW_DESCRIPTIONS = {
             "realized gain per disposal in exact decimal math",
     "hifo": "HIFO cost-basis matching: highest-cost lots consumed first, "
             "with realized gain per disposal in exact decimal math",
+    "acb": "Average cost basis: every acquisition pooled at a running "
+           "average unit cost, with realized gain per disposal",
+    "holding-period": "Each disposal split into short- and long-term "
+                      "portions by how long the consumed lots were held",
     "gains": "Realized gain/loss summary per disposal plus totals, without "
              "lot-level detail",
     "inventory": "Remaining holdings after all trades, each lot with its "
                  "acquisition time and unit cost",
+    "validate": "Every problem in a trade ledger reported at once: "
+                "unmatched sells, duplicates, bad numbers and timestamps",
 }
-# fifo/lifo/hifo force the matching method; gains/inventory narrow the output.
-LOTS_VIEW_METHOD = {"fifo": "FIFO", "lifo": "LIFO", "hifo": "HIFO"}
+# Three ways a narrow route can differ: it forces a matching method, it
+# narrows the output, or it runs a different computation entirely.
+LOTS_VIEW_METHOD = {"fifo": "FIFO", "lifo": "LIFO", "hifo": "HIFO",
+                    "acb": "ACB"}
 
 
 def create_app() -> FastAPI:
@@ -234,16 +243,21 @@ def create_app() -> FastAPI:
 
     def _register_lots_view(path: str):
         method = LOTS_VIEW_METHOD.get(path)
-        view = None if method else path
+        view = path if path in ("gains", "inventory") else None
 
         async def handler(request: Request):
-            from evm_canon.lots import calculate_lots, project
+            from evm_canon.lots import (calculate_lots, check_ledger,
+                                        holding_period, project)
             payload, err = await _json_body(request)
             if err:
                 return err
             if method:
                 payload = {**payload,
                            "raw": {**payload["raw"], "method": method}}
+            if path == "validate":
+                return check_ledger(payload)
+            if path == "holding-period":
+                return holding_period(payload)
             out = calculate_lots(payload)
             return project(out, view) if view else out
 
@@ -253,7 +267,10 @@ def create_app() -> FastAPI:
                                 "fee": "10 (optional)",
                                 "time": "unix or ISO (sortable)"}]}
             if not method:
-                body["method"] = "FIFO | LIFO | HIFO (default FIFO)"
+                body["method"] = "FIFO | LIFO | HIFO | ACB (default FIFO)"
+            if path == "holding-period":
+                body["long_term_days"] = "365 (optional)"
+                body["trades"][0]["time"] = "unix seconds/millis or ISO-8601"
             return {"usage": {"method": "POST", "body": body,
                               "returns": LOTS_VIEW_DESCRIPTIONS[path]}}
 

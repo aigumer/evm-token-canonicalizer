@@ -1,4 +1,4 @@
-"""LotLedger — deterministic crypto tax-lot engine (FIFO / LIFO / HIFO).
+"""LotLedger — deterministic crypto tax-lot engine (FIFO / LIFO / HIFO / ACB).
 
 Matches disposals against acquisition lots and reports realized gains and
 remaining inventory. Pure computation: no clock, no network, no floats —
@@ -7,18 +7,30 @@ byte-identical output. Errors are typed and honest: overselling is an
 INSUFFICIENT_INVENTORY error naming the asset and the shortfall, never a
 silently clamped number.
 
+This module computes; it does not advise. Method names describe mechanics
+(which lots are consumed in which order), not what a caller ought to file.
+
 Conventions (stated once, deterministic):
 - Buy fees are capitalized into the lot's cost basis; sell fees reduce
   proceeds. Fees are in the quote currency.
 - Trades are processed in chronological order; ties keep input order.
-- HIFO consumes the highest-unit-cost lots first; FIFO oldest; LIFO newest.
+- HIFO consumes the highest-unit-cost lots first; FIFO oldest; LIFO newest;
+  ACB pools every acquisition at a running average unit cost.
 """
 
-from decimal import Decimal, InvalidOperation
+import datetime
+import re
+from decimal import Decimal, InvalidOperation, localcontext
 
-ENGINE_VERSION = "lots@1"
-METHODS = ("FIFO", "LIFO", "HIFO")
+ENGINE_VERSION = "lots@2"
+METHODS = ("FIFO", "LIFO", "HIFO", "ACB")
+# ACB has no discrete lots to point at, so disposals carry no lot trail.
+POOLED_METHODS = ("ACB",)
 MAX_TRADES = 1000
+# Division only occurs for pooled unit costs; a fixed context keeps that
+# deterministic regardless of the caller's ambient decimal settings.
+PRECISION = 50
+LONG_TERM_DAYS_DEFAULT = 365
 
 
 def _dec(value, field: str) -> Decimal:
@@ -46,9 +58,207 @@ def _fmt(d: Decimal) -> str:
 
 def calculate_lots(payload: dict) -> dict:
     try:
-        return _calculate(payload)
+        with localcontext() as ctx:
+            ctx.prec = PRECISION
+            return _calculate(payload)
     except _Typed as exc:
         return {"error": exc.err}
+
+
+def _epoch_seconds(value, field: str) -> int:
+    """Absolute time in seconds. Holding periods need real durations, so a
+    merely sortable time (an opaque label) is rejected rather than guessed."""
+    if isinstance(value, bool) or value is None:
+        raise _Typed("TIME_NOT_ABSOLUTE", field, "absolute timestamp required")
+    if isinstance(value, (int, float)) or (isinstance(value, str)
+                                           and re.fullmatch(r"\d+", value)):
+        n = int(value)
+        return n // 1000 if n >= 10**12 else n      # unix ms vs s by magnitude
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        raise _Typed("TIME_NOT_ABSOLUTE", field,
+                     "time must be unix seconds/millis or an ISO-8601 datetime")
+    if dt.tzinfo is None:                            # naive input is UTC
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return int(dt.timestamp())
+
+
+def holding_period(payload: dict) -> dict:
+    """Split each disposal into short- and long-term portions by how long the
+    consumed lots were held. Mechanical definition, stated so a caller can
+    check it: a portion is long-term when the holding duration is strictly
+    greater than ``long_term_days`` (default 365); proceeds are allocated
+    across portions pro rata by amount."""
+    try:
+        with localcontext() as ctx:
+            ctx.prec = PRECISION
+            return _holding_period(payload)
+    except _Typed as exc:
+        return {"error": exc.err}
+
+
+def _holding_period(payload: dict) -> dict:
+    raw = payload.get("raw") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        raise _Typed("MALFORMED_INVOCATION", "raw", "missing 'raw' object")
+    method = str(raw.get("method") or payload.get("method") or "FIFO").upper()
+    if method in POOLED_METHODS:
+        raise _Typed("NO_LOT_TRAIL", "raw.method",
+                     "pooled methods have no acquisition dates to measure; "
+                     "use FIFO, LIFO or HIFO")
+    days = raw.get("long_term_days", LONG_TERM_DAYS_DEFAULT)
+    if isinstance(days, bool) or not str(days).lstrip("-").isdigit() \
+            or int(days) < 0:
+        raise _Typed("INVALID_NUMBER", "raw.long_term_days",
+                     "must be a non-negative whole number of days")
+    cutoff = int(days) * 86400
+
+    full = _calculate(payload)
+    out_disposals, short_tot, long_tot = [], _zero_bucket(), _zero_bucket()
+
+    for i, d in enumerate(full["result"]["disposals"]):
+        sold_at = _epoch_seconds(d["time"], f"raw.trades[{i}].time")
+        amount = Decimal(d["amount"])
+        proceeds = Decimal(d["proceeds"])
+        short, long = _zero_bucket(), _zero_bucket()
+        for lot in d["lots_consumed"]:
+            take = Decimal(lot["amount"])
+            basis = take * Decimal(lot["unit_cost"])
+            share = proceeds * take / amount if amount else Decimal(0)
+            held = sold_at - _epoch_seconds(lot["acquired_time"],
+                                            "raw.trades[].time")
+            bucket = long if held > cutoff else short
+            bucket["amount"] += take
+            bucket["proceeds"] += share
+            bucket["cost_basis"] += basis
+        for bucket, total in ((short, short_tot), (long, long_tot)):
+            for k in bucket:
+                total[k] += bucket[k]
+        out_disposals.append({
+            "asset": d["asset"], "time": d["time"], "amount": d["amount"],
+            "short_term": _render_bucket(short),
+            "long_term": _render_bucket(long)})
+
+    return {"result": {"method": method,
+                       "long_term_days": int(days),
+                       "disposals": out_disposals,
+                       "totals": {"short_term": _render_bucket(short_tot),
+                                  "long_term": _render_bucket(long_tot)}},
+            "report": {"trades_processed": full["report"]["trades_processed"],
+                       "disposal_count": len(out_disposals),
+                       "engine_version": ENGINE_VERSION}}
+
+
+def _zero_bucket() -> dict:
+    return {"amount": Decimal(0), "proceeds": Decimal(0),
+            "cost_basis": Decimal(0)}
+
+
+def _render_bucket(b: dict) -> dict:
+    gain = b["proceeds"] - b["cost_basis"]
+    return {"amount": _fmt(b["amount"]), "proceeds": _fmt(b["proceeds"]),
+            "cost_basis": _fmt(b["cost_basis"]), "gain": _fmt(gain)}
+
+
+def check_ledger(payload: dict) -> dict:
+    """Report every problem in a trade ledger instead of failing on the first.
+
+    Real exchange exports are messy, and an accounting agent needs the whole
+    list before deciding what to fix — so this collects issues and keeps
+    going where the calculators stop.
+    """
+    raw = payload.get("raw") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return {"error": {"code": "MALFORMED_INVOCATION", "field": "raw",
+                          "detail": "missing 'raw' object"}}
+    trades = raw.get("trades")
+    if not isinstance(trades, list) or not trades:
+        return {"error": {"code": "MALFORMED_INVOCATION", "field": "raw.trades",
+                          "detail": "trades must be a non-empty array"}}
+
+    issues, clean, seen = [], [], {}
+    buys = sells = 0
+    for i, t in enumerate(trades):
+        def flag(code, detail, idx=i):
+            issues.append({"code": code, "trade_index": idx, "detail": detail})
+        if not isinstance(t, dict):
+            flag("MALFORMED_TRADE", "trade must be an object")
+            continue
+        side = str(t.get("side", "")).lower()
+        if side not in ("buy", "sell"):
+            flag("INVALID_SIDE", f"side must be buy or sell, got {t.get('side')!r}")
+        asset = t.get("asset")
+        if not asset or not isinstance(asset, str):
+            flag("INVALID_ASSET", "asset symbol required")
+        ok = True
+        nums = {}
+        for field, default in (("amount", None), ("price", None), ("fee", "0")):
+            v = t.get(field, default)
+            if isinstance(v, float):
+                flag("FLOAT_REJECTED", f"{field} is a float; send it as a string")
+                ok = False
+                continue
+            try:
+                nums[field] = Decimal(str(v))
+            except (InvalidOperation, TypeError):
+                flag("INVALID_NUMBER", f"{field} is not a decimal number: {v!r}")
+                ok = False
+        if ok:
+            if nums.get("amount", Decimal(0)) <= 0:
+                flag("INVALID_NUMBER", "amount must be positive")
+                ok = False
+            if nums.get("price", Decimal(0)) < 0 or nums.get("fee", Decimal(0)) < 0:
+                flag("INVALID_NUMBER", "price/fee must be >= 0")
+                ok = False
+        if t.get("time") is None:
+            flag("BAD_TIMESTAMP", "time required")
+            ok = False
+        if ok and side in ("buy", "sell") and isinstance(asset, str):
+            key = (side, asset.upper(), str(nums["amount"]), str(nums["price"]),
+                   str(t.get("time")))
+            if key in seen:
+                flag("POSSIBLE_DUPLICATE",
+                     f"identical to trade #{seen[key]}")
+            else:
+                seen[key] = i
+            clean.append({"i": i, "side": side, "asset": asset.upper(),
+                          "amount": nums["amount"], "time": t.get("time")})
+            buys += side == "buy"
+            sells += side == "sell"
+
+    try:
+        clean.sort(key=lambda t: (t["time"], t["i"]))
+    except TypeError:
+        issues.append({"code": "BAD_TIMESTAMP", "trade_index": None,
+                       "detail": "times are not mutually comparable "
+                                 "(mix of numbers and strings)"})
+        clean = []
+
+    balances: dict[str, Decimal] = {}
+    for t in clean:
+        if t["side"] == "buy":
+            balances[t["asset"]] = balances.get(t["asset"], Decimal(0)) + t["amount"]
+        else:
+            held = balances.get(t["asset"], Decimal(0))
+            if t["amount"] > held:
+                issues.append({"code": "INSUFFICIENT_INVENTORY",
+                               "trade_index": t["i"],
+                               "detail": f"sell {_fmt(t['amount'])} {t['asset']} "
+                                         f"but only {_fmt(held)} held at that "
+                                         f"time (short {_fmt(t['amount'] - held)})"})
+                balances[t["asset"]] = Decimal(0)
+            else:
+                balances[t["asset"]] = held - t["amount"]
+
+    return {"result": {"ok": not issues,
+                       "issues": issues,
+                       "summary": {"trades": len(trades), "buys": buys,
+                                   "sells": sells,
+                                   "assets": sorted({t["asset"] for t in clean})}},
+            "report": {"issue_count": len(issues),
+                       "engine_version": ENGINE_VERSION}}
 
 
 def project(out: dict, view: str) -> dict:
@@ -129,8 +339,21 @@ def _calculate(payload: dict) -> dict:
         lots = inventory.setdefault(t["asset"], [])
         if t["side"] == "buy":
             cost = t["amount"] * t["price"] + t["fee"]
-            lots.append({"time": t["time"], "amount": t["amount"],
-                         "unit_cost": cost / t["amount"]})
+            if method in POOLED_METHODS:
+                # One running pool per asset: merge cost and quantity, then
+                # re-derive the average unit cost. `time` stays null because
+                # a pooled holding has no single acquisition date.
+                if lots:
+                    pool = lots[0]
+                    total = pool["amount"] * pool["unit_cost"] + cost
+                    pool["amount"] += t["amount"]
+                    pool["unit_cost"] = total / pool["amount"]
+                else:
+                    lots.append({"time": None, "amount": t["amount"],
+                                 "unit_cost": cost / t["amount"]})
+            else:
+                lots.append({"time": t["time"], "amount": t["amount"],
+                             "unit_cost": cost / t["amount"]})
             continue
 
         available = sum((l["amount"] for l in lots), Decimal(0))
@@ -139,7 +362,9 @@ def _calculate(payload: dict) -> dict:
                          f"sell {_fmt(t['amount'])} {t['asset']} but only "
                          f"{_fmt(available)} held at that time")
 
-        if method == "FIFO":
+        if method in POOLED_METHODS:
+            order = list(range(len(lots)))   # a single pool
+        elif method == "FIFO":
             order = list(range(len(lots)))
         elif method == "LIFO":
             order = list(range(len(lots) - 1, -1, -1))
@@ -168,7 +393,8 @@ def _calculate(payload: dict) -> dict:
                           "proceeds": _fmt(proceeds),
                           "cost_basis": _fmt(basis),
                           "gain": _fmt(proceeds - basis),
-                          "lots_consumed": consumed})
+                          "lots_consumed": [] if method in POOLED_METHODS
+                                            else consumed})
         total_proceeds += proceeds
         total_basis += basis
 
@@ -188,5 +414,6 @@ def _calculate(payload: dict) -> dict:
         },
         "report": {"trades_processed": len(parsed),
                    "disposal_count": len(disposals),
+                   "pooled": method in POOLED_METHODS,
                    "engine_version": ENGINE_VERSION},
     }
