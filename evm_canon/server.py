@@ -226,8 +226,10 @@ def create_app() -> FastAPI:
     # than scheduled under load. A request to our own public URL counts as
     # inbound traffic, so a self-ping loop keeps the instance awake as long
     # as it's running; the external pinger remains as the wake-up fallback.
+    # Opt-out, because the free tier bills instance-hours across all services:
+    # only the venue that gets actively probed (OKX) is worth keeping warm.
     external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
+    if external_url and os.environ.get("EVM_CANON_KEEPALIVE", "1") != "0":
         import threading
         import urllib.request
 
