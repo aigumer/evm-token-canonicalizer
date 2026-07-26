@@ -89,3 +89,30 @@ def test_malformed_invocation_is_400(client):
                        headers={"content-type": "application/json"}
                        ).status_code == 400
     assert client.post("/canonicalize", json={}).status_code == 400
+
+
+def test_lots_view_routes(client):
+    trades = [
+        {"side": "buy", "asset": "BTC", "amount": "1", "price": "10000", "time": 1},
+        {"side": "buy", "asset": "BTC", "amount": "1", "price": "30000", "time": 2},
+        {"side": "sell", "asset": "BTC", "amount": "1", "price": "40000", "time": 3}]
+    # each method route forces its own matching, no parameter needed
+    assert client.post("/lots/fifo", json={"trades": trades}
+                       ).json()["result"]["disposals"][0]["cost_basis"] == "10000"
+    assert client.post("/lots/lifo", json={"trades": trades}
+                       ).json()["result"]["disposals"][0]["cost_basis"] == "30000"
+    assert client.post("/lots/hifo", json={"trades": trades}
+                       ).json()["result"]["disposals"][0]["cost_basis"] == "30000"
+    # projections return less, not the same blob
+    gains = client.post("/lots/gains", json={"trades": trades}).json()["result"]
+    assert "inventory" not in gains and "lots_consumed" not in gains["disposals"][0]
+    inv = client.post("/lots/inventory", json={"trades": trades}).json()["result"]
+    assert "disposals" not in inv and inv["inventory"][0]["asset"] == "BTC"
+    # GET describes the contract for free
+    assert "usage" in client.get("/lots/fifo").json()
+
+
+def test_lots_view_typed_errors(client):
+    r = client.post("/lots/fifo", json={"trades": [
+        {"side": "sell", "asset": "BTC", "amount": "1", "price": "1", "time": 1}]})
+    assert r.json()["error"]["code"] == "INSUFFICIENT_INVENTORY"

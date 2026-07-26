@@ -113,3 +113,29 @@ def test_validation_errors():
     big = [{"side": "buy", "asset": "A", "amount": "1", "price": "1",
             "time": i} for i in range(1001)]
     assert _run(big)["error"]["code"] == "TOO_MANY_TRADES"
+
+
+def test_project_gains_drops_lot_detail():
+    from evm_canon.lots import project
+    out = _run(BUYS + [{"side": "sell", "asset": "BTC", "amount": "1",
+                        "price": "40000", "time": 3}])
+    g = project(out, "gains")
+    assert "inventory" not in g["result"]
+    assert "lots_consumed" not in g["result"]["disposals"][0]
+    assert g["result"]["disposals"][0]["gain"] == "30000"
+    assert g["result"]["totals"]["gain"] == "30000"
+
+
+def test_project_inventory_drops_disposals():
+    from evm_canon.lots import project
+    out = _run(BUYS + [{"side": "sell", "asset": "BTC", "amount": "1",
+                        "price": "40000", "time": 3}])
+    inv = project(out, "inventory")
+    assert "disposals" not in inv["result"]
+    assert inv["result"]["inventory"][0]["lots"][0]["unit_cost"] == "30000"
+
+
+def test_project_passes_errors_through():
+    from evm_canon.lots import project
+    err = calculate_lots({})
+    assert project(err, "gains") == err

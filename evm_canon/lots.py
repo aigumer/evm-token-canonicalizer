@@ -51,6 +51,27 @@ def calculate_lots(payload: dict) -> dict:
         return {"error": exc.err}
 
 
+def project(out: dict, view: str) -> dict:
+    """Narrow a full result to one focused view.
+
+    Callers who only need a tax summary shouldn't have to receive (or pay to
+    parse) lot-level detail, and a portfolio agent asking "what do I still
+    hold" doesn't want the disposal log. Errors pass through untouched.
+    """
+    if "error" in out or view not in ("gains", "inventory"):
+        return out
+    r = out["result"]
+    if view == "gains":
+        result = {"method": r["method"],
+                  "disposals": [{k: v for k, v in d.items()
+                                 if k != "lots_consumed"}
+                                for d in r["disposals"]],
+                  "totals": r["totals"]}
+    else:
+        result = {"method": r["method"], "inventory": r["inventory"]}
+    return {"result": result, "report": out["report"]}
+
+
 def _calculate(payload: dict) -> dict:
     raw = payload.get("raw") if isinstance(payload, dict) else None
     if not isinstance(raw, dict):

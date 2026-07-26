@@ -31,6 +31,24 @@ PRICE_DEFAULT = "$0.002"
 PRICE_DECODE_DEFAULT = "$0.003"
 PRICE_RESOLVE_DEFAULT = "$0.001"
 PRICE_LOTS_DEFAULT = "$0.005"
+# Narrow tax-lot views: the three matching methods cost the same as the
+# generic route; the two projection views return less and cost less.
+LOTS_VIEWS = {"fifo": "$0.005", "lifo": "$0.005", "hifo": "$0.005",
+              "gains": "$0.003", "inventory": "$0.003"}
+LOTS_VIEW_DESCRIPTIONS = {
+    "fifo": "FIFO cost-basis matching: oldest lots consumed first, with "
+            "realized gain per disposal in exact decimal math",
+    "lifo": "LIFO cost-basis matching: newest lots consumed first, with "
+            "realized gain per disposal in exact decimal math",
+    "hifo": "HIFO cost-basis matching: highest-cost lots consumed first, "
+            "with realized gain per disposal in exact decimal math",
+    "gains": "Realized gain/loss summary per disposal plus totals, without "
+             "lot-level detail",
+    "inventory": "Remaining holdings after all trades, each lot with its "
+                 "acquisition time and unit cost",
+}
+# fifo/lifo/hifo force the matching method; gains/inventory narrow the output.
+LOTS_VIEW_METHOD = {"fifo": "FIFO", "lifo": "LIFO", "hifo": "HIFO"}
 
 
 def create_app() -> FastAPI:
@@ -105,6 +123,15 @@ def create_app() -> FastAPI:
                   "POST /decode": decode, "GET /decode": decode,
                   "POST /resolve": resolve, "GET /resolve": resolve,
                   "POST /lots": lots, "GET /lots": lots}
+        # Narrow tax-lot views get their own listings, so they need their own
+        # gated paths (a buyer who wants only FIFO shouldn't have to know a
+        # parameter name, and the lighter views are priced lower).
+        for path, price in LOTS_VIEWS.items():
+            route = paid_route(
+                os.environ.get(f"EVM_CANON_PRICE_LOTS_{path.upper()}", price),
+                LOTS_VIEW_DESCRIPTIONS[path])
+            routes[f"POST /lots/{path}"] = route
+            routes[f"GET /lots/{path}"] = route
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
     # Render's free tier stops the instance after 15 min without inbound
@@ -204,6 +231,37 @@ def create_app() -> FastAPI:
         from evm_canon.lots import calculate_lots
         payload, err = await _json_body(request)
         return err if err else calculate_lots(payload)
+
+    def _register_lots_view(path: str):
+        method = LOTS_VIEW_METHOD.get(path)
+        view = None if method else path
+
+        async def handler(request: Request):
+            from evm_canon.lots import calculate_lots, project
+            payload, err = await _json_body(request)
+            if err:
+                return err
+            if method:
+                payload = {**payload,
+                           "raw": {**payload["raw"], "method": method}}
+            out = calculate_lots(payload)
+            return project(out, view) if view else out
+
+        def usage():
+            body = {"trades": [{"side": "buy|sell", "asset": "BTC",
+                                "amount": "1.5", "price": "60000",
+                                "fee": "10 (optional)",
+                                "time": "unix or ISO (sortable)"}]}
+            if not method:
+                body["method"] = "FIFO | LIFO | HIFO (default FIFO)"
+            return {"usage": {"method": "POST", "body": body,
+                              "returns": LOTS_VIEW_DESCRIPTIONS[path]}}
+
+        app.add_api_route(f"/lots/{path}", handler, methods=["POST"])
+        app.add_api_route(f"/lots/{path}", usage, methods=["GET"])
+
+    for _view_path in LOTS_VIEWS:
+        _register_lots_view(_view_path)
 
     @app.get("/canonicalize")
     def canonicalize_usage():
