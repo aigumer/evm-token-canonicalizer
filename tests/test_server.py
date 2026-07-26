@@ -68,14 +68,35 @@ def test_bare_payload_accepted(client):
     assert r.json()["result"]["totals"]["gain"] == "5"
 
 
-def test_paid_mode_app_constructs(monkeypatch):
+def _requires(module_path: str):
+    """The two payment backends ship mutually exclusive SDKs, so each one's
+    wiring test only runs in the deployment that actually installs it."""
+    return pytest.importorskip(module_path)
+
+
+def test_okx_backend_app_constructs(monkeypatch):
     """Route/scheme wiring errors must surface at build time, not on Render."""
+    okx_http = _requires("x402.http")
+    if not hasattr(okx_http, "OKXFacilitatorClient"):
+        pytest.skip("OKX SDK fork not installed")
     monkeypatch.setenv("EVM_CANON_PAY_TO",
                        "0x8797b596a56f8b2d46f428fca2e6ac2a62a353ee")
     monkeypatch.setenv("OKX_API_KEY", "test-key")
     monkeypatch.setenv("OKX_SECRET_KEY", "test-secret")
     monkeypatch.setenv("OKX_PASSPHRASE", "test-pass")
+    monkeypatch.delenv("CDP_API_KEY_ID", raising=False)
     create_app()  # must not raise; facilitator is not contacted until a request
+
+
+def test_cdp_backend_app_constructs(monkeypatch):
+    _requires("x402.extensions.bazaar")
+    _requires("cdp.auth.utils.http")
+    monkeypatch.setenv("EVM_CANON_PAY_TO",
+                       "0x8797b596a56f8b2d46f428fca2e6ac2a62a353ee")
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-id")
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-secret")
+    monkeypatch.delenv("OKX_API_KEY", raising=False)
+    create_app()  # declarations + extension registration must not raise
 
 
 def test_malformed_invocation_is_400(client):
@@ -135,3 +156,36 @@ def test_new_lots_routes(client):
     assert v["ok"] is True and v["summary"]["sells"] == 1
     for path in ("acb", "holding-period", "validate"):
         assert "usage" in client.get(f"/lots/{path}").json()
+
+
+def test_payment_backend_detection(monkeypatch):
+    from evm_canon.server import payment_backend
+    for var in ("EVM_CANON_PAYMENT_BACKEND", "CDP_API_KEY_ID", "OKX_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    assert payment_backend() == "testnet"
+    monkeypatch.setenv("OKX_API_KEY", "k")
+    assert payment_backend() == "okx"
+    monkeypatch.setenv("CDP_API_KEY_ID", "id")   # CDP wins when both present
+    assert payment_backend() == "cdp"
+    monkeypatch.setenv("EVM_CANON_PAYMENT_BACKEND", "OKX")
+    assert payment_backend() == "okx"            # explicit setting overrides
+
+
+def test_discovery_specs_cover_every_paid_route():
+    """A route listed without discovery metadata is invisible in the Bazaar."""
+    from evm_canon.discovery import SPECS
+    from evm_canon.server import LOTS_VIEWS
+    expected = {"canonicalize", "decode", "resolve", "lots"}
+    expected |= {f"lots/{v}" for v in LOTS_VIEWS}
+    assert expected == set(SPECS)
+    for path, spec in SPECS.items():
+        assert spec["input_schema"]["type"] == "object", path
+        assert spec["output_example"], path
+
+
+def test_discovery_declaration_shape():
+    pytest.importorskip("x402.extensions.bazaar")   # Base deployment only
+    from evm_canon.discovery import declaration_for
+    assert declaration_for("nope") is None
+    decl = declaration_for("decode")
+    assert "bazaar" in decl

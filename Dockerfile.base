@@ -1,0 +1,12 @@
+# Base/Coinbase deployment. Separate image from the OKX one because the two
+# x402 SDKs cannot share a Python environment (same import namespace).
+FROM python:3.13-slim
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY evm_canon ./evm_canon
+RUN pip install --no-cache-dir ".[serve-base]"
+
+ENV PORT=8080 EVM_CANON_PAYMENT_BACKEND=cdp
+EXPOSE 8080
+CMD ["evm-canon-serve"]

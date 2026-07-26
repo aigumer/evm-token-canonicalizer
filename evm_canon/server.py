@@ -5,16 +5,25 @@ returns 402 with a PAYMENT-REQUIRED challenge until the caller presents a
 valid PAYMENT-SIGNATURE, verified and settled through the facilitator.
 Without EVM_CANON_PAY_TO the endpoint is free (dev / self-hosted mode).
 
+Three payment backends, auto-detected from the environment (or forced with
+EVM_CANON_PAYMENT_BACKEND). They cannot share one process: the OKX SDK fork
+and the x402 Foundation package both occupy the `x402` import namespace, so
+each backend is its own deployment with its own extra — `.[serve]` for OKX,
+`.[serve-base]` for CDP/testnet.
+
+  okx      X Layer (eip155:196), USD₮0, OKX facilitator. Needs
+           OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE.
+  cdp      Base (eip155:8453), USDC, Coinbase facilitator. Needs
+           CDP_API_KEY_ID / CDP_API_KEY_SECRET. Routes additionally declare
+           Bazaar metadata, which is how they get discovered: the facilitator
+           catalogs a resource the first time it settles a payment for it.
+  testnet  Base Sepolia via the public x402.org facilitator; no credentials.
+
 Env:
   EVM_CANON_PAY_TO        receiving EVM address (enables payment gating)
-  EVM_CANON_PRICE         price per call, e.g. "$0.002" (default)
-  EVM_CANON_NETWORK       x402 network id (default "eip155:196" = X Layer)
-  OKX_API_KEY / OKX_SECRET_KEY / OKX_PASSPHRASE
-                          OKX dev-portal credentials; when set, verification
-                          and settlement go through the OKX facilitator
-                          (web3.okx.com /api/v6/pay/x402/*)
-  EVM_CANON_FACILITATOR   fallback facilitator URL when OKX creds absent
-                          (default: x402.org — testnets only)
+  EVM_CANON_PRICE[_*]     per-route price, e.g. "$0.002"
+  EVM_CANON_NETWORK       override the backend's default network id
+  EVM_CANON_FACILITATOR   override the facilitator URL
 
 GET /healthz and GET /schema are always free.
 """
@@ -60,6 +69,49 @@ LOTS_VIEW_METHOD = {"fifo": "FIFO", "lifo": "LIFO", "hifo": "HIFO",
                     "acb": "ACB"}
 
 
+CDP_FACILITATOR = "https://api.cdp.coinbase.com/platform/v2/x402"
+# Facilitator operations the auth provider is asked to sign for; the key names
+# are fixed by the SDK, the paths by CDP.
+_CDP_OPERATIONS = {"verify": ("POST", "/verify"),
+                   "settle": ("POST", "/settle"),
+                   "supported": ("GET", "/supported"),
+                   "bazaar": ("GET", "/discovery/resources")}
+
+
+def payment_backend() -> str:
+    """Which facilitator this process talks to. Explicit setting wins;
+    otherwise the presence of credentials decides."""
+    forced = os.environ.get("EVM_CANON_PAYMENT_BACKEND")
+    if forced:
+        return forced.lower()
+    if os.environ.get("CDP_API_KEY_ID"):
+        return "cdp"
+    if os.environ.get("OKX_API_KEY"):
+        return "okx"
+    return "testnet"
+
+
+def _cdp_header_factory(base_url: str):
+    """CDP signs a JWT per request path, so headers are generated per call."""
+    from urllib.parse import urlparse
+
+    from cdp.auth.utils.http import GetAuthHeadersOptions, get_auth_headers
+
+    parsed = urlparse(base_url)
+    host, prefix = parsed.netloc, parsed.path.rstrip("/")
+
+    def create_headers() -> dict[str, dict[str, str]]:
+        key_id = os.environ["CDP_API_KEY_ID"]
+        secret = os.environ["CDP_API_KEY_SECRET"]
+        return {name: get_auth_headers(GetAuthHeadersOptions(
+                    api_key_id=key_id, api_key_secret=secret,
+                    request_method=method, request_host=host,
+                    request_path=f"{prefix}{path}"))
+                for name, (method, path) in _CDP_OPERATIONS.items()}
+
+    return create_headers
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="evm-canon", docs_url=None, redoc_url=None)
 
@@ -71,35 +123,55 @@ def create_app() -> FastAPI:
         from x402.mechanisms.evm.exact.server import ExactEvmScheme
         from x402.server import x402ResourceServer
 
-        okx_key = os.environ.get("OKX_API_KEY")
-        if okx_key:
+        backend = payment_backend()
+        if backend == "okx":
             from x402.http import (OKXAuthConfig, OKXFacilitatorClient,
                                    OKXFacilitatorConfig)
             from x402.mechanisms.evm.deferred.server import AggrDeferredEvmScheme
             facilitator = OKXFacilitatorClient(OKXFacilitatorConfig(
                 auth=OKXAuthConfig(
-                    api_key=okx_key,
+                    api_key=os.environ["OKX_API_KEY"],
                     secret_key=os.environ["OKX_SECRET_KEY"],
                     passphrase=os.environ["OKX_PASSPHRASE"]),
                 sync_settle=True))
-            network = os.environ.get("EVM_CANON_NETWORK", "eip155:196")
+            default_network = "eip155:196"
             schemes = [ExactEvmScheme(), AggrDeferredEvmScheme()]
+        elif backend == "cdp":
+            from x402.http import (CreateHeadersAuthProvider, FacilitatorConfig,
+                                   HTTPFacilitatorClient)
+            url = os.environ.get("EVM_CANON_FACILITATOR", CDP_FACILITATOR)
+            facilitator = HTTPFacilitatorClient(FacilitatorConfig(
+                url=url, auth_provider=CreateHeadersAuthProvider(
+                    _cdp_header_factory(url))))
+            default_network = "eip155:8453"
+            schemes = [ExactEvmScheme()]
         else:
             from x402.http import FacilitatorConfig, HTTPFacilitatorClient
             facilitator_url = os.environ.get("EVM_CANON_FACILITATOR")
             facilitator = HTTPFacilitatorClient(
                 FacilitatorConfig(url=facilitator_url)
                 if facilitator_url else FacilitatorConfig())
-            network = os.environ.get("EVM_CANON_NETWORK", "eip155:84532")
+            default_network = "eip155:84532"
             schemes = [ExactEvmScheme()]
+        network = os.environ.get("EVM_CANON_NETWORK", default_network)
 
         server = x402ResourceServer(facilitator)
         for scheme in schemes:
             server.register(network, scheme)
+        if backend == "cdp":
+            # Registers the discovery extension so the declarations below
+            # travel with each challenge and get indexed on first settlement.
+            from x402.extensions.bazaar import bazaar_resource_server_extension
+            server.register_extension(bazaar_resource_server_extension)
 
         # OKX x402 validation probes the endpoint with plain GETs too, so the
         # challenge must gate every method the URL serves, not just POST.
-        def paid_route(price: str, description: str) -> RouteConfig:
+        def paid_route(price: str, description: str,
+                       path: str | None = None) -> RouteConfig:
+            extensions = None
+            if backend == "cdp" and path:
+                from evm_canon.discovery import declaration_for
+                extensions = declaration_for(path)
             return RouteConfig(
                 accepts=[PaymentOption(
                     scheme=s.scheme,
@@ -110,24 +182,29 @@ def create_app() -> FastAPI:
                 ) for s in schemes],
                 description=description,
                 mime_type="application/json",
+                extensions=extensions,
             )
 
         canon = paid_route(
             os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT),
             "Canonicalize one EVM token/value payload into "
-            "schema-validated JSON (deterministic, honest nulls)")
+            "schema-validated JSON (deterministic, honest nulls)",
+            "canonicalize")
         decode = paid_route(
             os.environ.get("EVM_CANON_PRICE_DECODE", PRICE_DECODE_DEFAULT),
             "Decode EVM calldata into typed function args with "
-            "deterministic risk flags (unlimited approvals, admin actions)")
+            "deterministic risk flags (unlimited approvals, admin actions)",
+            "decode")
         resolve = paid_route(
             os.environ.get("EVM_CANON_PRICE_RESOLVE", PRICE_RESOLVE_DEFAULT),
             "Resolve ENS names to addresses and reverse, "
-            "with forward-verification of reverse records")
+            "with forward-verification of reverse records",
+            "resolve")
         lots = paid_route(
             os.environ.get("EVM_CANON_PRICE_LOTS", PRICE_LOTS_DEFAULT),
             "Crypto tax-lot engine: FIFO/LIFO/HIFO cost-basis matching, "
-            "realized gains and remaining inventory in exact decimal math")
+            "realized gains and remaining inventory in exact decimal math",
+            "lots")
         routes = {"POST /canonicalize": canon, "GET /canonicalize": canon,
                   "POST /decode": decode, "GET /decode": decode,
                   "POST /resolve": resolve, "GET /resolve": resolve,
@@ -136,9 +213,10 @@ def create_app() -> FastAPI:
         # gated paths (a buyer who wants only FIFO shouldn't have to know a
         # parameter name, and the lighter views are priced lower).
         for path, price in LOTS_VIEWS.items():
+            env_key = path.upper().replace("-", "_")
             route = paid_route(
-                os.environ.get(f"EVM_CANON_PRICE_LOTS_{path.upper()}", price),
-                LOTS_VIEW_DESCRIPTIONS[path])
+                os.environ.get(f"EVM_CANON_PRICE_LOTS_{env_key}", price),
+                LOTS_VIEW_DESCRIPTIONS[path], f"lots/{path}")
             routes[f"POST /lots/{path}"] = route
             routes[f"GET /lots/{path}"] = route
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)

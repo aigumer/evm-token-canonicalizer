@@ -19,6 +19,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx2"]
 serve = ["fastapi>=0.110", "uvicorn>=0.29", "okxweb3-app-x402[evm]>=0.1.1", "httpx>=0.27"]
+# Base/Coinbase deployment. Mutually exclusive with `serve`: the OKX fork and
+# the Foundation package both install into the `x402` namespace.
+serve-base = ["fastapi>=0.110", "uvicorn>=0.29", "x402[evm,extensions]>=2.16",
+              "cdp-sdk>=1.0", "httpx>=0.27"]
 
 [project.scripts]
 evm-canon = "evm_canon.cli:main"
