@@ -156,6 +156,61 @@ SPECS["lots/holding-period"] = _spec(
      "report": {"disposal_count": 1}})
 
 
+_ENCODE_OUT = {"result": {"to": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+                          "data": "0xa9059cbb…", "value": "0",
+                          "selector": "0xa9059cbb",
+                          "function": {"name": "transfer",
+                                       "signature": "transfer(address,uint256)"}},
+               "report": {"risk_flags": [], "decimals_used": 6,
+                          "amount_interpreted_as": "human", "signed": False}}
+_ENCODE_IN_SCHEMA = {
+    "type": "object", "required": ["args"],
+    "properties": {
+        "function": {"type": "string",
+                     "description": "name or full signature (generic route only)"},
+        "args": {"type": "object",
+                 "description": "arguments keyed by parameter name"},
+        "token": {"type": "string", "description": "symbol or contract address"},
+        "chain": {"description": "chain name, alias or numeric chainId"},
+        "value": {"type": "string", "description": "native value in wei"},
+    }}
+
+SPECS["encode"] = _spec(
+    {"function": "transfer", "token": "USDC", "chain": "arbitrum",
+     "args": {"to": "0x1111111111111111111111111111111111111111",
+              "amount": "1.5"}},
+    _ENCODE_IN_SCHEMA, _ENCODE_OUT)
+for _path, _example in (
+        ("transfer", {"token": "USDC", "chain": "arbitrum",
+                      "args": {"to": "0x1111111111111111111111111111111111111111",
+                               "amount": "1.5"}}),
+        ("approve", {"token": "USDC", "chain": "arbitrum",
+                     "args": {"spender": "0x1111111111111111111111111111111111111111",
+                              "amount": "100"}}),
+        ("transfer-from", {"token": "USDC", "chain": "arbitrum",
+                           "args": {"from": "0x1111111111111111111111111111111111111111",
+                                    "to": "0x2222222222222222222222222222222222222222",
+                                    "amount": "5"}}),
+        ("nft-transfer", {"args": {"from": "0x1111111111111111111111111111111111111111",
+                                   "to": "0x2222222222222222222222222222222222222222",
+                                   "tokenId": 42}}),
+        ("approve-all", {"args": {"operator": "0x1111111111111111111111111111111111111111",
+                                  "approved": True}}),
+        ("wrap", {"value": "1000000000000000000"}),
+        ("unwrap", {"args": {"amount": 1000000000000000000}}),
+        ("swap", {"args": {"amountIn": 1000000, "amountOutMin": 1,
+                           "path": ["0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+                                    "0x2222222222222222222222222222222222222222"],
+                           "to": "0x1111111111111111111111111111111111111111",
+                           "deadline": 1800000000}}),
+        ("permit", {"args": {"owner": "0x1111111111111111111111111111111111111111",
+                             "spender": "0x2222222222222222222222222222222222222222",
+                             "value": 1000000, "deadline": 1800000000,
+                             "v": 27, "r": "0x" + "00" * 32, "s": "0x" + "00" * 32}}),
+):
+    SPECS[f"encode/{_path}"] = _spec(_example, _ENCODE_IN_SCHEMA, _ENCODE_OUT)
+
+
 def declaration_for(path: str):
     """Bazaar extension dict for a route, or None if the path has no spec."""
     spec = SPECS.get(path)

@@ -40,6 +40,32 @@ PRICE_DEFAULT = "$0.002"
 PRICE_DECODE_DEFAULT = "$0.003"
 PRICE_RESOLVE_DEFAULT = "$0.001"
 PRICE_LOTS_DEFAULT = "$0.005"
+# Calldata building. Priced at the Bazaar median ($0.01) rather than the
+# floor we used before — the sellers with real balances sit at the median,
+# not under it.
+PRICE_ENCODE_DEFAULT = "$0.01"
+# Narrow encoders: one listing per intent, each producing different calldata.
+ENCODE_VIEWS = {
+    "transfer": ("transfer", "Build ERC-20 transfer calldata from a human "
+                             "amount, resolving token decimals from the "
+                             "pinned registry"),
+    "approve": ("approve", "Build ERC-20 approval calldata, flagging "
+                           "unlimited allowances before anything is signed"),
+    "transfer-from": ("transferFrom", "Build delegated ERC-20 transferFrom "
+                                      "calldata"),
+    "nft-transfer": ("safeTransferFrom(address,address,uint256)",
+                     "Build ERC-721 safe transfer calldata"),
+    "approve-all": ("setApprovalForAll", "Build collection-wide NFT approval "
+                                         "calldata, flagged as high risk"),
+    "wrap": ("deposit", "Build native-token wrapping calldata (WETH-style "
+                        "deposit) with the value to attach"),
+    "unwrap": ("withdraw", "Build unwrapping calldata (WETH-style withdraw)"),
+    "swap": ("swapExactTokensForTokens",
+             "Build Uniswap-V2-style exact-input swap calldata with the "
+             "token path"),
+    "permit": ("permit", "Build EIP-2612 permit calldata for signature-based "
+                         "allowances"),
+}
 # Narrow tax-lot views: the three matching methods cost the same as the
 # generic route; the two projection views return less and cost less.
 LOTS_VIEWS = {"fifo": "$0.005", "lifo": "$0.005", "hifo": "$0.005",
@@ -205,10 +231,24 @@ def create_app() -> FastAPI:
             "Crypto tax-lot engine: FIFO/LIFO/HIFO cost-basis matching, "
             "realized gains and remaining inventory in exact decimal math",
             "lots")
+        encode = paid_route(
+            os.environ.get("EVM_CANON_PRICE_ENCODE", PRICE_ENCODE_DEFAULT),
+            "Build EVM calldata from a named function and human arguments, "
+            "with deterministic risk flags; never signs or broadcasts",
+            "encode")
         routes = {"POST /canonicalize": canon, "GET /canonicalize": canon,
                   "POST /decode": decode, "GET /decode": decode,
                   "POST /resolve": resolve, "GET /resolve": resolve,
-                  "POST /lots": lots, "GET /lots": lots}
+                  "POST /lots": lots, "GET /lots": lots,
+                  "POST /encode": encode, "GET /encode": encode}
+        for path, (_fn, desc) in ENCODE_VIEWS.items():
+            env_key = path.upper().replace("-", "_")
+            r = paid_route(
+                os.environ.get(f"EVM_CANON_PRICE_ENCODE_{env_key}",
+                               PRICE_ENCODE_DEFAULT),
+                desc, f"encode/{path}")
+            routes[f"POST /encode/{path}"] = r
+            routes[f"GET /encode/{path}"] = r
         # Narrow tax-lot views get their own listings, so they need their own
         # gated paths (a buyer who wants only FIFO shouldn't have to know a
         # parameter name, and the lighter views are priced lower).
@@ -304,6 +344,45 @@ def create_app() -> FastAPI:
         from evm_canon.ens import resolve
         payload, err = await _json_body(request)
         return err if err else resolve(payload)
+
+    @app.get("/encode")
+    def encode_usage():
+        return {"usage": {"method": "POST",
+                          "body": {"raw": {
+                              "function": "transfer | approve | full signature",
+                              "args": {"to": "0x…", "amount": "1.5"},
+                              "token": "USDC or 0x… (optional)",
+                              "chain": "arbitrum (optional)",
+                              "value": "native wei (optional)"}},
+                          "note": "returns unsigned calldata only"}}
+
+    @app.post("/encode")
+    async def encode_route(request: Request):
+        from evm_canon.encode import encode_call
+        payload, err = await _json_body(request)
+        return err if err else encode_call(payload)
+
+    def _register_encode_view(path: str, fn: str):
+        async def handler(request: Request):
+            from evm_canon.encode import encode_call
+            payload, err = await _json_body(request)
+            if err:
+                return err
+            payload = {**payload, "raw": {**payload["raw"], "function": fn}}
+            return encode_call(payload)
+
+        def usage():
+            return {"usage": {"method": "POST", "builds": fn,
+                              "body": {"args": "object keyed by argument name",
+                                       "token": "symbol or address (optional)",
+                                       "chain": "name or chainId (optional)"},
+                              "note": "returns unsigned calldata only"}}
+
+        app.add_api_route(f"/encode/{path}", handler, methods=["POST"])
+        app.add_api_route(f"/encode/{path}", usage, methods=["GET"])
+
+    for _p, (_fn, _d) in ENCODE_VIEWS.items():
+        _register_encode_view(_p, _fn)
 
     @app.get("/lots")
     def lots_usage():

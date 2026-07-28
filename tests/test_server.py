@@ -174,9 +174,10 @@ def test_payment_backend_detection(monkeypatch):
 def test_discovery_specs_cover_every_paid_route():
     """A route listed without discovery metadata is invisible in the Bazaar."""
     from evm_canon.discovery import SPECS
-    from evm_canon.server import LOTS_VIEWS
-    expected = {"canonicalize", "decode", "resolve", "lots"}
+    from evm_canon.server import ENCODE_VIEWS, LOTS_VIEWS
+    expected = {"canonicalize", "decode", "resolve", "lots", "encode"}
     expected |= {f"lots/{v}" for v in LOTS_VIEWS}
+    expected |= {f"encode/{v}" for v in ENCODE_VIEWS}
     assert expected == set(SPECS)
     for path, spec in SPECS.items():
         assert spec["input_schema"]["type"] == "object", path
@@ -189,3 +190,24 @@ def test_discovery_declaration_shape():
     assert declaration_for("nope") is None
     decl = declaration_for("decode")
     assert "bazaar" in decl
+
+
+def test_encode_routes(client):
+    SP = "0x1111111111111111111111111111111111111111"
+    r = client.post("/encode", json={"function": "transfer", "token": "USDC",
+                                     "chain": "arbitrum",
+                                     "args": {"to": SP, "amount": "1.5"}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["result"]["data"].startswith("0xa9059cbb")
+    assert body["report"]["signed"] is False
+    # the narrow route fixes the function, so the caller need not name it
+    r2 = client.post("/encode/transfer", json={"token": "USDC", "chain": "arbitrum",
+                                               "args": {"to": SP, "amount": "1.5"}})
+    assert r2.json()["result"]["data"] == body["result"]["data"]
+    # risky intents are built but flagged
+    r3 = client.post("/encode/approve-all",
+                     json={"args": {"operator": SP, "approved": True}})
+    assert "approval_for_all_granted" in r3.json()["report"]["risk_flags"]
+    for path in ("transfer", "approve", "wrap", "swap"):
+        assert "usage" in client.get(f"/encode/{path}").json()
