@@ -211,6 +211,14 @@ for _path, _example in (
     SPECS[f"encode/{_path}"] = _spec(_example, _ENCODE_IN_SCHEMA, _ENCODE_OUT)
 
 
+SPECS["lots/balances"] = _spec(
+    {"trades": _TRADES_EXAMPLE}, _lots_input(False),
+    {"result": {"assets": [{"asset": "BTC", "bought": "2", "sold": "1",
+                            "net": "1", "trades": 3,
+                            "first_trade": 1, "last_trade": 3}],
+                "total_fees": "0", "negative_assets": []},
+     "report": {"trades_processed": 3, "asset_count": 1}})
+
 SPECS["checksum"] = _spec(
     {"addresses": ["0xaf88d065e77c8cc2239327c5edb3a432268e5831",
                    "0x1111111111111111111111111111111111111111"]},

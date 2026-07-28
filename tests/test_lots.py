@@ -262,3 +262,41 @@ def test_check_ledger_flags_incomparable_times():
         {"side": "buy", "asset": "E", "amount": "1", "price": "1",
          "time": "2024-01-01"}])
     assert any(i["code"] == "BAD_TIMESTAMP" for i in out["result"]["issues"])
+
+
+def _bal(trades):
+    from evm_canon.lots import balances
+    return balances({"raw": {"trades": trades}})
+
+
+def test_balances_nets_per_asset():
+    out = _bal(BUYS + [{"side": "sell", "asset": "BTC", "amount": "0.5",
+                        "price": "40000", "fee": "3", "time": 3},
+                       {"side": "buy", "asset": "ETH", "amount": "2",
+                        "price": "100", "time": 4}])
+    rows = {a["asset"]: a for a in out["result"]["assets"]}
+    assert rows["BTC"]["bought"] == "2" and rows["BTC"]["sold"] == "0.5"
+    assert rows["BTC"]["net"] == "1.5" and rows["BTC"]["trades"] == 3
+    assert rows["BTC"]["first_trade"] == 1 and rows["BTC"]["last_trade"] == 3
+    assert rows["ETH"]["net"] == "2"
+    assert out["result"]["total_fees"] == "3"
+    assert out["result"]["negative_assets"] == []
+
+
+def test_balances_survive_a_ledger_that_cannot_be_matched():
+    """The whole point of the cheap route: it answers where matching errors."""
+    broken = [{"side": "sell", "asset": "BTC", "amount": "2", "price": "1",
+               "time": 1}]
+    assert _run(broken)["error"]["code"] == "INSUFFICIENT_INVENTORY"
+    out = _bal(broken)
+    assert out["result"]["assets"][0]["net"] == "-2"
+    assert out["result"]["negative_assets"] == ["BTC"]
+
+
+def test_balances_validation_errors():
+    from evm_canon.lots import balances
+    assert balances({})["error"]["code"] == "MALFORMED_INVOCATION"
+    assert _bal([{"side": "buy", "asset": "B", "amount": "1", "price": "1"}]
+                )["error"]["code"] == "BAD_TIMESTAMP"
+    assert _bal([{"side": "buy", "asset": "B", "amount": 0.5, "price": "1",
+                  "time": 1}])["error"]["code"] == "FLOAT_REJECTED"

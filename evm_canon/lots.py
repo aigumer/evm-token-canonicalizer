@@ -162,6 +162,83 @@ def _render_bucket(b: dict) -> dict:
             "cost_basis": _fmt(b["cost_basis"]), "gain": _fmt(gain)}
 
 
+def balances(payload: dict) -> dict:
+    """Net position per asset straight from the trade list.
+
+    One pass, no lot matching, no cost basis — which is the point: it answers
+    "what does this ledger say I hold" even when the ledger is too broken for
+    cost-basis matching to run at all. A net that goes negative is reported
+    rather than treated as an error, because that is exactly the case a
+    caller is trying to find.
+    """
+    try:
+        with localcontext() as ctx:
+            ctx.prec = PRECISION
+            return _balances(payload)
+    except _Typed as exc:
+        return {"error": exc.err}
+
+
+def _balances(payload: dict) -> dict:
+    raw = payload.get("raw") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        raise _Typed("MALFORMED_INVOCATION", "raw", "missing 'raw' object")
+    trades = raw.get("trades")
+    if not isinstance(trades, list) or not trades:
+        raise _Typed("MALFORMED_INVOCATION", "raw.trades",
+                     "trades must be a non-empty array")
+    if len(trades) > MAX_TRADES:
+        raise _Typed("TOO_MANY_TRADES", "raw.trades",
+                     f"max {MAX_TRADES} trades per call, got {len(trades)}")
+
+    per: dict[str, dict] = {}
+    fees = Decimal(0)
+    for i, t in enumerate(trades):
+        f = f"raw.trades[{i}]"
+        if not isinstance(t, dict):
+            raise _Typed("MALFORMED_INVOCATION", f, "trade must be an object")
+        side = str(t.get("side", "")).lower()
+        if side not in ("buy", "sell"):
+            raise _Typed("INVALID_SIDE", f + ".side", "side must be buy or sell")
+        asset = t.get("asset")
+        if not asset or not isinstance(asset, str):
+            raise _Typed("INVALID_ASSET", f + ".asset", "asset symbol required")
+        amount = _dec(t.get("amount"), f + ".amount")
+        if amount <= 0:
+            raise _Typed("INVALID_NUMBER", f + ".amount", "must be positive")
+        fees += _dec(t.get("fee", "0"), f + ".fee")
+        time = t.get("time")
+        if time is None:
+            raise _Typed("BAD_TIMESTAMP", f + ".time", "time required")
+
+        row = per.setdefault(asset.upper(), {
+            "bought": Decimal(0), "sold": Decimal(0), "trades": 0,
+            "first": time, "last": time})
+        row["bought" if side == "buy" else "sold"] += amount
+        row["trades"] += 1
+        try:
+            row["first"] = min(row["first"], time)
+            row["last"] = max(row["last"], time)
+        except TypeError:
+            raise _Typed("BAD_TIMESTAMP", "raw.trades[].time",
+                         "times must be mutually comparable")
+
+    out, negative = [], []
+    for asset, row in sorted(per.items()):
+        net = row["bought"] - row["sold"]
+        if net < 0:
+            negative.append(asset)
+        out.append({"asset": asset, "bought": _fmt(row["bought"]),
+                    "sold": _fmt(row["sold"]), "net": _fmt(net),
+                    "trades": row["trades"],
+                    "first_trade": row["first"], "last_trade": row["last"]})
+    return {"result": {"assets": out, "total_fees": _fmt(fees),
+                       "negative_assets": negative},
+            "report": {"trades_processed": len(trades),
+                       "asset_count": len(out),
+                       "engine_version": ENGINE_VERSION}}
+
+
 def check_ledger(payload: dict) -> dict:
     """Report every problem in a trade ledger instead of failing on the first.
 

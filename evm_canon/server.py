@@ -74,7 +74,8 @@ ENCODE_VIEWS = {
 # generic route; the two projection views return less and cost less.
 LOTS_VIEWS = {"fifo": "$0.005", "lifo": "$0.005", "hifo": "$0.005",
               "acb": "$0.005", "holding-period": "$0.004",
-              "gains": "$0.003", "inventory": "$0.003", "validate": "$0.002"}
+              "gains": "$0.003", "inventory": "$0.003", "validate": "$0.002",
+              "balances": "$0.001"}
 LOTS_VIEW_DESCRIPTIONS = {
     "fifo": "FIFO cost-basis matching: oldest lots consumed first, with "
             "realized gain per disposal in exact decimal math",
@@ -92,6 +93,8 @@ LOTS_VIEW_DESCRIPTIONS = {
                  "acquisition time and unit cost",
     "validate": "Every problem in a trade ledger reported at once: "
                 "unmatched sells, duplicates, bad numbers and timestamps",
+    "balances": "Net position per asset straight from the trades, with no "
+                "cost-basis matching — works on ledgers too broken to match",
 }
 # Three ways a narrow route can differ: it forces a matching method, it
 # narrows the output, or it runs a different computation entirely.
@@ -486,6 +489,9 @@ def create_app() -> FastAPI:
                            "raw": {**payload["raw"], "method": method}}
             if path == "validate":
                 return check_ledger(payload)
+            if path == "balances":
+                from evm_canon.lots import balances
+                return balances(payload)
             if path == "holding-period":
                 return holding_period(payload)
             out = calculate_lots(payload)
