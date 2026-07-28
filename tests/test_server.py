@@ -175,7 +175,8 @@ def test_discovery_specs_cover_every_paid_route():
     """A route listed without discovery metadata is invisible in the Bazaar."""
     from evm_canon.discovery import SPECS
     from evm_canon.server import ENCODE_VIEWS, LOTS_VIEWS
-    expected = {"canonicalize", "decode", "resolve", "lots", "encode"}
+    expected = {"canonicalize", "decode", "resolve", "lots", "encode",
+                "checksum"}
     expected |= {f"lots/{v}" for v in LOTS_VIEWS}
     expected |= {f"encode/{v}" for v in ENCODE_VIEWS}
     assert expected == set(SPECS)
@@ -211,3 +212,29 @@ def test_encode_routes(client):
     assert "approval_for_all_granted" in r3.json()["report"]["risk_flags"]
     for path in ("transfer", "approve", "wrap", "swap"):
         assert "usage" in client.get(f"/encode/{path}").json()
+
+
+def test_checksum_route(client):
+    r = client.post("/checksum", json={"addresses": [
+        "0xaf88d065e77c8cc2239327c5edb3a432268e5831", "0xnothex", "0x123"]})
+    assert r.status_code == 200
+    res = r.json()["result"]
+    assert res["addresses"][0]["address"] == \
+        "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+    assert res["addresses"][0]["was_checksummed"] is False
+    # a bad entry is reported, it does not sink the batch
+    assert res["addresses"][1]["valid"] is False
+    assert res["all_valid"] is False
+    assert r.json()["report"]["invalid_count"] == 2
+    single = client.post("/checksum", json={
+        "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"}).json()
+    assert single["result"]["addresses"][0]["was_checksummed"] is True
+
+
+def test_manifest_is_free_and_complete(client):
+    m = client.get("/").json()
+    assert m["service"] == "evm-canon"
+    paths = {s["path"] for s in m["services"]}
+    assert "/checksum" in paths and "/encode/transfer" in paths
+    assert "/lots/validate" in paths
+    assert all(s["price"].startswith("$") for s in m["services"])

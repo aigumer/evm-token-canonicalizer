@@ -211,6 +211,20 @@ for _path, _example in (
     SPECS[f"encode/{_path}"] = _spec(_example, _ENCODE_IN_SCHEMA, _ENCODE_OUT)
 
 
+SPECS["checksum"] = _spec(
+    {"addresses": ["0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+                   "0x1111111111111111111111111111111111111111"]},
+    {"type": "object",
+     "properties": {"address": {"type": "string"},
+                    "addresses": {"type": "array", "items": {"type": "string"}}},
+     "description": "one 'address' or an 'addresses' batch, max 200"},
+    {"result": {"addresses": [{"input": "0xaf88…5831",
+                               "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+                               "valid": True, "was_checksummed": False}],
+                "all_valid": True},
+     "report": {"count": 1, "invalid_count": 0}})
+
+
 def declaration_for(path: str):
     """Bazaar extension dict for a route, or None if the path has no spec."""
     spec = SPECS.get(path)

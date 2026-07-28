@@ -30,6 +30,49 @@ def canon_address(addr: str) -> str:
     return to_checksum_address(s)
 
 
+MAX_ADDRESS_BATCH = 200
+
+
+def checksum_batch(payload: dict) -> dict:
+    """Normalize one address or a batch to EIP-55 form.
+
+    The cheapest thing this service does — one keccak per address — and it is
+    priced accordingly. Invalid entries come back as null with the reason
+    rather than failing the whole batch, because a caller cleaning a list
+    wants the good rows and the bad ones identified, not an exception.
+    """
+    raw = payload.get("raw") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return {"error": {"code": "MALFORMED_INVOCATION", "field": "raw",
+                          "detail": "missing 'raw' object"}}
+    items = raw.get("addresses")
+    if items is None:
+        one = raw.get("address")
+        items = [one] if one is not None else None
+    if not isinstance(items, list) or not items:
+        return {"error": {"code": "MALFORMED_INVOCATION", "field": "raw.address",
+                          "detail": "provide 'address' or a non-empty "
+                                    "'addresses' array"}}
+    if len(items) > MAX_ADDRESS_BATCH:
+        return {"error": {"code": "TOO_MANY_ADDRESSES", "field": "raw.addresses",
+                          "detail": f"max {MAX_ADDRESS_BATCH} per call, "
+                                    f"got {len(items)}"}}
+
+    out, invalid = [], 0
+    for value in items:
+        try:
+            checksummed = canon_address(str(value))
+        except CanonError:
+            invalid += 1
+            out.append({"input": value, "address": None, "valid": False,
+                        "was_checksummed": None})
+            continue
+        out.append({"input": value, "address": checksummed, "valid": True,
+                    "was_checksummed": str(value).strip() == checksummed})
+    return {"result": {"addresses": out, "all_valid": invalid == 0},
+            "report": {"count": len(out), "invalid_count": invalid}}
+
+
 # ------------------------------------------------------------------ chain --
 
 def resolve_chain(registry: Registry, chain: str | None,

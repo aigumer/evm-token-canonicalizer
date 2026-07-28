@@ -44,6 +44,10 @@ PRICE_LOTS_DEFAULT = "$0.005"
 # floor we used before — the sellers with real balances sit at the median,
 # not under it.
 PRICE_ENCODE_DEFAULT = "$0.01"
+# One keccak per address, priced at what it costs. It doubles as the entry
+# point of the catalog: marketplace rows advertise an agent by its cheapest
+# service, so this is the number a browsing buyer sees first.
+PRICE_CHECKSUM_DEFAULT = "$0.001"
 # Narrow encoders: one listing per intent, each producing different calldata.
 ENCODE_VIEWS = {
     "transfer": ("transfer", "Build ERC-20 transfer calldata from a human "
@@ -241,6 +245,13 @@ def create_app() -> FastAPI:
                   "POST /resolve": resolve, "GET /resolve": resolve,
                   "POST /lots": lots, "GET /lots": lots,
                   "POST /encode": encode, "GET /encode": encode}
+        checksum = paid_route(
+            os.environ.get("EVM_CANON_PRICE_CHECKSUM", PRICE_CHECKSUM_DEFAULT),
+            "Normalize EVM addresses to EIP-55 checksum form in batches, "
+            "flagging invalid entries instead of failing the batch",
+            "checksum")
+        routes["POST /checksum"] = checksum
+        routes["GET /checksum"] = checksum
         for path, (_fn, desc) in ENCODE_VIEWS.items():
             env_key = path.upper().replace("-", "_")
             r = paid_route(
@@ -344,6 +355,66 @@ def create_app() -> FastAPI:
         from evm_canon.ens import resolve
         payload, err = await _json_body(request)
         return err if err else resolve(payload)
+
+    @app.get("/")
+    def manifest():
+        """Free catalog of everything on offer.
+
+        An agent that discovers one paid route can learn the rest without
+        paying to probe them one by one — cheap for us, and it turns a single
+        hit into a view of the whole toolkit.
+        """
+        def price(env, default):
+            return os.environ.get(env, default)
+        services = [
+            {"path": "/checksum", "price": price("EVM_CANON_PRICE_CHECKSUM",
+                                                 PRICE_CHECKSUM_DEFAULT),
+             "does": "EIP-55 address normalization, batched"},
+            {"path": "/canonicalize", "price": price("EVM_CANON_PRICE",
+                                                     PRICE_DEFAULT),
+             "does": "messy token/value data into schema-validated JSON"},
+            {"path": "/decode", "price": price("EVM_CANON_PRICE_DECODE",
+                                               PRICE_DECODE_DEFAULT),
+             "does": "calldata into typed args with risk flags"},
+            {"path": "/encode", "price": price("EVM_CANON_PRICE_ENCODE",
+                                               PRICE_ENCODE_DEFAULT),
+             "does": "named function and human args into unsigned calldata"},
+            {"path": "/resolve", "price": price("EVM_CANON_PRICE_RESOLVE",
+                                                PRICE_RESOLVE_DEFAULT),
+             "does": "ENS forward and verified reverse resolution"},
+            {"path": "/lots", "price": price("EVM_CANON_PRICE_LOTS",
+                                             PRICE_LOTS_DEFAULT),
+             "does": "FIFO/LIFO/HIFO/ACB cost basis and realized gains"},
+        ]
+        services += [{"path": f"/encode/{p}",
+                      "price": price(f"EVM_CANON_PRICE_ENCODE_"
+                                     f"{p.upper().replace('-', '_')}",
+                                     PRICE_ENCODE_DEFAULT),
+                      "does": d.split(",")[0]}
+                     for p, (_f, d) in ENCODE_VIEWS.items()]
+        services += [{"path": f"/lots/{p}",
+                      "price": price(f"EVM_CANON_PRICE_LOTS_"
+                                     f"{p.upper().replace('-', '_')}", d),
+                      "does": LOTS_VIEW_DESCRIPTIONS[p].split(":")[0]}
+                     for p, d in LOTS_VIEWS.items()]
+        return {"service": "evm-canon",
+                "promise": "deterministic core, honest nulls, typed errors",
+                "payment": "x402 per call; GET any path for its contract, free",
+                "services": services,
+                "registry_version": default_registry().version}
+
+    @app.get("/checksum")
+    def checksum_usage():
+        return {"usage": {"method": "POST",
+                          "body": {"addresses": ["0x…", "0x…"]},
+                          "note": "or a single 'address'; invalid entries come "
+                                  "back null rather than failing the batch"}}
+
+    @app.post("/checksum")
+    async def checksum_route(request: Request):
+        from evm_canon.resolve import checksum_batch
+        payload, err = await _json_body(request)
+        return err if err else checksum_batch(payload)
 
     @app.get("/encode")
     def encode_usage():
