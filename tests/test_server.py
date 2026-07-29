@@ -117,10 +117,22 @@ def test_bazaar_declared_on_post_only(monkeypatch):
     assert len(posts) == len(gets) == 24
     assert all(v.extensions and "bazaar" in v.extensions for v in posts.values())
     assert all(not v.extensions for v in gets.values())
-    # every declaration must satisfy the facilitator's own validator
-    from x402.extensions.bazaar import validate_discovery_extension_spec
+    # Every declaration must satisfy the facilitator's own validators — both
+    # of them. The spec check catches a malformed declaration; the data check
+    # catches an example that doesn't match the schema next to it (that is how
+    # /encode/wrap silently missed the catalog: no "args" in the example).
+    import copy
+
+    from x402.extensions.bazaar import (validate_discovery_extension,
+                                        validate_discovery_extension_spec)
     for name, cfg in posts.items():
-        result = validate_discovery_extension_spec(cfg.extensions["bazaar"])
+        ext = cfg.extensions["bazaar"]
+        assert validate_discovery_extension_spec(ext).valid, name
+        # The server stamps the request's method onto the declaration before
+        # it goes out; validate what the facilitator will actually receive.
+        stamped = copy.deepcopy(ext)
+        stamped["info"]["input"]["method"] = "POST"
+        result = validate_discovery_extension(stamped)
         assert result.valid, (name, result.errors)
 
 

@@ -196,7 +196,10 @@ for _path, _example in (
                                    "tokenId": 42}}),
         ("approve-all", {"args": {"operator": "0x1111111111111111111111111111111111111111",
                                   "approved": True}}),
-        ("wrap", {"value": "1000000000000000000"}),
+        # deposit() takes no arguments, but "args" is required by the shared
+        # schema — an example that omits it fails validation and the route is
+        # dropped from the catalog instead of being listed.
+        ("wrap", {"args": {}, "value": "1000000000000000000"}),
         ("unwrap", {"args": {"amount": 1000000000000000000}}),
         ("swap", {"args": {"amountIn": 1000000, "amountOutMin": 1,
                            "path": ["0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
