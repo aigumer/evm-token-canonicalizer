@@ -99,6 +99,31 @@ def test_cdp_backend_app_constructs(monkeypatch):
     create_app()  # declarations + extension registration must not raise
 
 
+def test_bazaar_declared_on_post_only(monkeypatch):
+    """A body declaration stamped "GET" fails the facilitator's validator, so
+    the extension must ride on POST routes only — GET stays paid but silent."""
+    _requires("x402.extensions.bazaar")
+    _requires("cdp.auth.utils.http")
+    monkeypatch.setenv("EVM_CANON_PAY_TO",
+                       "0x8797b596a56f8b2d46f428fca2e6ac2a62a353ee")
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-id")
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-secret")
+    monkeypatch.delenv("OKX_API_KEY", raising=False)
+    app = create_app()
+    routes = next(m.kwargs["routes"] for m in app.user_middleware
+                  if "routes" in m.kwargs)
+    posts = {k: v for k, v in routes.items() if k.startswith("POST ")}
+    gets = {k: v for k, v in routes.items() if k.startswith("GET ")}
+    assert len(posts) == len(gets) == 24
+    assert all(v.extensions and "bazaar" in v.extensions for v in posts.values())
+    assert all(not v.extensions for v in gets.values())
+    # every declaration must satisfy the facilitator's own validator
+    from x402.extensions.bazaar import validate_discovery_extension_spec
+    for name, cfg in posts.items():
+        result = validate_discovery_extension_spec(cfg.extensions["bazaar"])
+        assert result.valid, (name, result.errors)
+
+
 def test_malformed_invocation_is_400(client):
     # bare objects are wrapped into raw now → honest-nulls result, 200
     r = client.post("/canonicalize", json={"nope": 1})

@@ -193,7 +193,10 @@ def create_app() -> FastAPI:
             server.register(network, scheme)
         if backend == "cdp":
             # Registers the discovery extension so the declarations below
-            # travel with each challenge and get indexed on first settlement.
+            # travel with each challenge. Cataloging happens facilitator-side
+            # on settlement, but it reads the extension out of the PAYMENT
+            # payload — a client that doesn't echo it back leaves us
+            # undiscoverable no matter how many payments settle.
             from x402.extensions.bazaar import bazaar_resource_server_extension
             server.register_extension(bazaar_resource_server_extension)
 
@@ -218,61 +221,62 @@ def create_app() -> FastAPI:
                 extensions=extensions,
             )
 
-        canon = paid_route(
-            os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT),
-            "Canonicalize one EVM token/value payload into "
-            "schema-validated JSON (deterministic, honest nulls)",
-            "canonicalize")
-        decode = paid_route(
-            os.environ.get("EVM_CANON_PRICE_DECODE", PRICE_DECODE_DEFAULT),
-            "Decode EVM calldata into typed function args with "
-            "deterministic risk flags (unlimited approvals, admin actions)",
-            "decode")
-        resolve = paid_route(
-            os.environ.get("EVM_CANON_PRICE_RESOLVE", PRICE_RESOLVE_DEFAULT),
-            "Resolve ENS names to addresses and reverse, "
-            "with forward-verification of reverse records",
-            "resolve")
-        lots = paid_route(
-            os.environ.get("EVM_CANON_PRICE_LOTS", PRICE_LOTS_DEFAULT),
-            "Crypto tax-lot engine: FIFO/LIFO/HIFO cost-basis matching, "
-            "realized gains and remaining inventory in exact decimal math",
-            "lots")
-        encode = paid_route(
-            os.environ.get("EVM_CANON_PRICE_ENCODE", PRICE_ENCODE_DEFAULT),
-            "Build EVM calldata from a named function and human arguments, "
-            "with deterministic risk flags; never signs or broadcasts",
-            "encode")
-        routes = {"POST /canonicalize": canon, "GET /canonicalize": canon,
-                  "POST /decode": decode, "GET /decode": decode,
-                  "POST /resolve": resolve, "GET /resolve": resolve,
-                  "POST /lots": lots, "GET /lots": lots,
-                  "POST /encode": encode, "GET /encode": encode}
-        checksum = paid_route(
-            os.environ.get("EVM_CANON_PRICE_CHECKSUM", PRICE_CHECKSUM_DEFAULT),
-            "Normalize EVM addresses to EIP-55 checksum form in batches, "
-            "flagging invalid entries instead of failing the batch",
-            "checksum")
-        routes["POST /checksum"] = checksum
-        routes["GET /checksum"] = checksum
+        routes: dict[str, RouteConfig] = {}
+
+        def add_paid(path: str, price: str, description: str) -> None:
+            """Gate both methods, but declare Bazaar metadata on POST only.
+
+            The discovery extension travels with the challenge and the SDK
+            stamps it with the method of the request that triggered it. Our
+            declarations describe a JSON body, and a body declaration carrying
+            "GET" fails the facilitator's own validator — an invalid extension
+            is dropped, so a route first paid for over GET would never be
+            cataloged. GET stays paid, it just stops advertising.
+            """
+            routes[f"POST /{path}"] = paid_route(price, description, path)
+            routes[f"GET /{path}"] = paid_route(price, description)
+
+        add_paid("canonicalize",
+                 os.environ.get("EVM_CANON_PRICE", PRICE_DEFAULT),
+                 "Canonicalize one EVM token/value payload into "
+                 "schema-validated JSON (deterministic, honest nulls)")
+        add_paid("decode",
+                 os.environ.get("EVM_CANON_PRICE_DECODE",
+                                PRICE_DECODE_DEFAULT),
+                 "Decode EVM calldata into typed function args with "
+                 "deterministic risk flags (unlimited approvals, admin actions)")
+        add_paid("resolve",
+                 os.environ.get("EVM_CANON_PRICE_RESOLVE",
+                                PRICE_RESOLVE_DEFAULT),
+                 "Resolve ENS names to addresses and reverse, "
+                 "with forward-verification of reverse records")
+        add_paid("lots",
+                 os.environ.get("EVM_CANON_PRICE_LOTS", PRICE_LOTS_DEFAULT),
+                 "Crypto tax-lot engine: FIFO/LIFO/HIFO cost-basis matching, "
+                 "realized gains and remaining inventory in exact decimal math")
+        add_paid("encode",
+                 os.environ.get("EVM_CANON_PRICE_ENCODE",
+                                PRICE_ENCODE_DEFAULT),
+                 "Build EVM calldata from a named function and human arguments, "
+                 "with deterministic risk flags; never signs or broadcasts")
+        add_paid("checksum",
+                 os.environ.get("EVM_CANON_PRICE_CHECKSUM",
+                                PRICE_CHECKSUM_DEFAULT),
+                 "Normalize EVM addresses to EIP-55 checksum form in batches, "
+                 "flagging invalid entries instead of failing the batch")
         for path, (_fn, desc) in ENCODE_VIEWS.items():
             env_key = path.upper().replace("-", "_")
-            r = paid_route(
-                os.environ.get(f"EVM_CANON_PRICE_ENCODE_{env_key}",
-                               PRICE_ENCODE_DEFAULT),
-                desc, f"encode/{path}")
-            routes[f"POST /encode/{path}"] = r
-            routes[f"GET /encode/{path}"] = r
+            add_paid(f"encode/{path}",
+                     os.environ.get(f"EVM_CANON_PRICE_ENCODE_{env_key}",
+                                    PRICE_ENCODE_DEFAULT), desc)
         # Narrow tax-lot views get their own listings, so they need their own
         # gated paths (a buyer who wants only FIFO shouldn't have to know a
         # parameter name, and the lighter views are priced lower).
         for path, price in LOTS_VIEWS.items():
             env_key = path.upper().replace("-", "_")
-            route = paid_route(
-                os.environ.get(f"EVM_CANON_PRICE_LOTS_{env_key}", price),
-                LOTS_VIEW_DESCRIPTIONS[path], f"lots/{path}")
-            routes[f"POST /lots/{path}"] = route
-            routes[f"GET /lots/{path}"] = route
+            add_paid(f"lots/{path}",
+                     os.environ.get(f"EVM_CANON_PRICE_LOTS_{env_key}", price),
+                     LOTS_VIEW_DESCRIPTIONS[path])
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
     # Render's free tier stops the instance after 15 min without inbound
