@@ -148,6 +148,11 @@ def _cdp_header_factory(base_url: str):
 def create_app() -> FastAPI:
     app = FastAPI(title="evm-canon", docs_url=None, redoc_url=None)
 
+    # Captured for /.well-known/x402 so the manifest is generated from the very
+    # table the middleware enforces, never a second hand-kept copy.
+    paid_routes: dict = {}
+    price_parser = None
+
     pay_to = os.environ.get("EVM_CANON_PAY_TO")
     if pay_to:
         from x402.http import PaymentOption
@@ -278,6 +283,10 @@ def create_app() -> FastAPI:
                      os.environ.get(f"EVM_CANON_PRICE_LOTS_{env_key}", price),
                      LOTS_VIEW_DESCRIPTIONS[path])
         app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+        paid_routes = routes
+        # The scheme that turns "$0.01" into an atomic amount for the challenge;
+        # the manifest quotes prices through the same call so the two agree.
+        price_parser = getattr(schemes[0], "parse_price", None)
 
     # Render's free tier stops the instance after 15 min without inbound
     # traffic, and external cron pingers (GitHub Actions) fire far less often
@@ -310,6 +319,13 @@ def create_app() -> FastAPI:
     @app.get("/schema")
     def schema():
         return default_schema()
+
+    @app.get("/.well-known/x402")
+    def well_known_x402(request: Request):
+        """Free discovery manifest — callers ask for this path before paying."""
+        from evm_canon.wellknown import build_manifest
+        base = os.environ.get("RENDER_EXTERNAL_URL") or str(request.base_url)
+        return build_manifest(paid_routes, base.rstrip("/"), price_parser)
 
     # Meta keys that live NEXT TO "raw" in the wrapped form, per route.
     META_KEYS = {"target_schema", "hints", "method"}

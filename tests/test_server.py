@@ -136,6 +136,46 @@ def test_bazaar_declared_on_post_only(monkeypatch):
         assert result.valid, (name, result.errors)
 
 
+def test_well_known_manifest_is_free_and_priced(monkeypatch):
+    """One unauthenticated GET must state the real terms of every paid route."""
+    _requires("x402.extensions.bazaar")
+    _requires("cdp.auth.utils.http")
+    monkeypatch.setenv("EVM_CANON_PAY_TO",
+                       "0x8797b596a56f8b2d46f428fca2e6ac2a62a353ee")
+    monkeypatch.setenv("CDP_API_KEY_ID", "test-id")
+    monkeypatch.setenv("CDP_API_KEY_SECRET", "test-secret")
+    monkeypatch.setenv("EVM_CANON_PRICE_CHECKSUM", "$0.001")
+    monkeypatch.delenv("OKX_API_KEY", raising=False)
+    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+    body = testclient.TestClient(create_app()).get("/.well-known/x402").json()
+    assert body["x402Version"] == 2
+    assert body["pagination"]["total"] == len(body["items"]) == 24
+    by_resource = {i["resource"].rsplit("/", 1)[-1]: i for i in body["items"]}
+    checksum = by_resource["checksum"]
+    assert checksum["metadata"]["method"] == "POST"
+    assert checksum["description"] and checksum["mimeType"] == "application/json"
+    accepts = checksum["accepts"][0]
+    # priced through the scheme, so the manifest cannot drift from the challenge
+    assert accepts["amount"] == "1000"
+    assert accepts["network"] == "eip155:8453"
+    assert accepts["payTo"] == "0x8797b596a56f8b2d46f428fca2e6ac2a62a353ee"
+    assert accepts["asset"].lower().startswith("0x833589")
+    # what we publish must survive the facilitator's validators, method included
+    from x402.extensions.bazaar import (validate_discovery_extension,
+                                        validate_discovery_extension_spec)
+    for item in body["items"]:
+        ext = item["extensions"]["bazaar"]
+        assert ext["info"]["input"]["method"] == "POST", item["resource"]
+        assert validate_discovery_extension_spec(ext).valid, item["resource"]
+        result = validate_discovery_extension(ext)
+        assert result.valid, (item["resource"], result.errors)
+
+
+def test_well_known_manifest_empty_when_free(client):
+    body = client.get("/.well-known/x402").json()
+    assert body["items"] == [] and body["pagination"]["total"] == 0
+
+
 def test_malformed_invocation_is_400(client):
     # bare objects are wrapped into raw now → honest-nulls result, 200
     r = client.post("/canonicalize", json={"nope": 1})
